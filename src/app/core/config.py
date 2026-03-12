@@ -21,4 +21,9 @@ class Settings(BaseSettings):
     OPEN_ROUTER_API_KEY: str = ""
     OPEN_ROUTER_LLM_MODEL: str = "openai/gpt-4o-mini"
     OPEN_ROUTER_SLM_MODEL: str = "openai/gpt-4o-mini"
-    SANDBOX_DIR: Path = Path("/home/netherman/code/manfred/sandbox")
+    LANGFUSE_ENABLED: bool = True
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = "https://cloud.langfuse.com"
+    LANGFUSE_ENVIRONMENT: str = "development"
+    SANDBOX_DIR: Path = Path("/home/netherman/code/manfred/src/sandbox")

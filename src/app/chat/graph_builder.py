@@ -5,6 +5,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.chat.nodes.chat_node import ChatNode
 from app.chat.state import GraphState
+from app.observability.langfuse_service import LangfuseService
 
 
 class GraphBuilder:
@@ -13,14 +14,20 @@ class GraphBuilder:
         llm: BaseChatModel,
         slm: BaseChatModel,
         tools: list,
+        langfuse_service: LangfuseService,
     ) -> None:
         self.llm = llm
         self.slm = slm
         self.tools = tools
+        self.langfuse_service = langfuse_service
 
     def build(self) -> CompiledStateGraph:
         workflow = StateGraph(GraphState)
-        chat_node = ChatNode(llm=self.llm, tools=self.tools)
+        chat_node = ChatNode(
+            llm=self.llm,
+            tools=self.tools,
+            langfuse_service=self.langfuse_service,
+        )
         tool_node = ToolNode(self.tools)
 
         workflow.add_node("chat", chat_node)

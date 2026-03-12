@@ -6,10 +6,21 @@ from langchain_openai import ChatOpenAI
 from app.chat.graph_builder import GraphBuilder
 from app.chat.tools.files import FileTools
 from app.core.config import Settings
+from app.observability.langfuse_service import LangfuseService
 
 
 class Container(containers.DeclarativeContainer):
     settings: providers.Singleton[Settings] = providers.Singleton(Settings)
+
+    langfuse_service = providers.Singleton(
+        LangfuseService,
+        public_key=settings.provided.LANGFUSE_PUBLIC_KEY,
+        secret_key=settings.provided.LANGFUSE_SECRET_KEY,
+        base_url=settings.provided.LANGFUSE_HOST,
+        environment=settings.provided.LANGFUSE_ENVIRONMENT,
+        release=settings.provided.VERSION,
+        enabled=settings.provided.LANGFUSE_ENABLED,
+    )
 
     llm: providers.Singleton[BaseChatModel] = providers.Singleton(
         ChatOpenAI,
@@ -40,6 +51,7 @@ class Container(containers.DeclarativeContainer):
         llm=llm,
         slm=slm,
         tools=tools,
+        langfuse_service=langfuse_service,
     )
 
     graph: providers.Singleton[CompiledStateGraph] = providers.Singleton(
