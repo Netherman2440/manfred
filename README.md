@@ -1,45 +1,24 @@
-# manfred-langgraph
+# manfred
 
 Minimalny starter projektu LangGraph w Pythonie.
 
 ## Wymagania
 
-- Python 3.10+
-- opcjonalnie: `uv` (`https://docs.astral.sh/uv/`)
+- Python 3.12+
+-  `uv` (`https://docs.astral.sh/uv/`)
 
 ## Szybki start (uv)
 
+Linux:
 ```bash
+cd src
 uv venv
+uv sync 
 source .venv/bin/activate
-uv sync --extra dev
+export PYTHONPATH="$PWD"
 ```
 
-## Szybki start (pip)
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-## Uruchomienie przykładu
-
-```bash
-langgraph-demo
-```
-
-albo:
-
-```bash
-uv run langgraph-demo
-```
-
-albo:
-
-```bash
-python3 -m manfred_langgraph.main
-```
 
 ## Testy
 

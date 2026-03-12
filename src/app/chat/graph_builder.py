@@ -1,23 +1,40 @@
-from langgraph.graph import StateGraph, BaseChatModel
+from langchain_core.language_models import BaseChatModel
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.prebuilt import ToolNode, tools_condition
+
+from app.chat.nodes.chat_node import ChatNode
 from app.chat.state import GraphState
 
 
 class GraphBuilder:
-    def __init__(self,
-            llm: BaseChatModel,
-            slm: BaseChatModel,
-            tools: list,
-            ):
-            self.llm=llm
-            self.slm=slm
-            self.tools=tools
-            
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        slm: BaseChatModel,
+        tools: list,
+    ) -> None:
+        self.llm = llm
+        self.slm = slm
+        self.tools = tools
 
-    def get_graph(self) -> StateGraph[GraphState]:
-
+    def build(self) -> CompiledStateGraph:
         workflow = StateGraph(GraphState)
+        chat_node = ChatNode(llm=self.llm, tools=self.tools)
+        tool_node = ToolNode(self.tools)
 
-        #TODO Agent node, Tool node
+        workflow.add_node("chat", chat_node)
+        workflow.add_node("tools", tool_node)
 
-        return workflow
+        workflow.add_edge(START, "chat")
+        workflow.add_conditional_edges(
+            "chat",
+            tools_condition,
+            {
+                "tools": "tools",
+                END: END,
+            },
+        )
+        workflow.add_edge("tools", "chat")
 
+        return workflow.compile()

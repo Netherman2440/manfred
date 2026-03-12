@@ -1,12 +1,14 @@
-
-from app.api.v1.api import api_router as router
-from app.infra.container import Container
-from fastapi import FastAPI
 import uvicorn
+from fastapi import FastAPI
+
+from app.api.v1.api import api_router
+from app.infra.container import Container
+
+
 container = Container()
 
-def create_app() -> FastAPI:
 
+def create_app() -> FastAPI:
     settings = container.settings()
 
     app = FastAPI(
@@ -15,12 +17,14 @@ def create_app() -> FastAPI:
         description=settings.DESCRIPTION,
         openapi_url=f"{settings.API_V1_STR}/openapi.json",
     )
-    app.container = container 
-
-    app.include_router(router)
-
+    app.container = container
+    app.include_router(api_router, prefix=settings.API_V1_STR)
     return app
 
 
 app = create_app()
-uvicorn.run(app, port=container.settings().API_PORT, host=container.settings().API_HOST)
+
+
+if __name__ == "__main__":
+    settings = container.settings()
+    uvicorn.run(app, port=settings.API_PORT, host=settings.API_HOST)
