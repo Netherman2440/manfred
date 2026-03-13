@@ -21,11 +21,11 @@ class ChatNode:
 
     async def __call__(self, state: GraphState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
         messages = state["messages"]
-        thread_id = self._get_thread_id(config)
+        session_id = self._get_session_id(config)
         model_name = self._langfuse_service.get_model_name(self._llm)
 
         with self._langfuse_service.start_generation(
-            thread_id=thread_id,
+            session_id=session_id,
             model_name=model_name,
             messages=messages,
         ) as generation:
@@ -41,16 +41,16 @@ class ChatNode:
             )
         return {"messages": [response]}
 
-    def _get_thread_id(self, config: RunnableConfig) -> str:
+    def _get_session_id(self, config: RunnableConfig) -> str:
         configurable = config.get("configurable", {})
         if not isinstance(configurable, dict):
-            return "unknown_thread"
+            return "unknown_session"
 
-        thread_id = configurable.get("thread_id")
-        if isinstance(thread_id, str) and thread_id:
-            return thread_id
+        session_id = configurable.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return session_id
 
-        return "unknown_thread"
+        return "unknown_session"
 
     def _get_usage_details(self, message: AIMessage) -> dict[str, Any] | None:
         usage_details = getattr(message, "usage_metadata", None)

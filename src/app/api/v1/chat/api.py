@@ -19,8 +19,8 @@ def _get_langfuse_service(request: Request):
     return request.app.container.langfuse_service()
 
 
-def _build_config(thread_id: str) -> RunnableConfig:
-    return {"configurable": {"thread_id": thread_id}}
+def _build_config(session_id: str) -> RunnableConfig:
+    return {"configurable": {"session_id": session_id}}
 
 
 def _extract_ai_text(messages: list[BaseMessage]) -> str:
@@ -38,19 +38,19 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     langfuse_service = _get_langfuse_service(request)
 
     try:
-        with langfuse_service.propagate_thread_context(
-            thread_id=payload.thread_id,
+        with langfuse_service.propagate_session_context(
+            session_id=payload.session_id,
             trace_name="chat.sync",
         ):
             with langfuse_service.start_request(
-                thread_id=payload.thread_id,
+                session_id=payload.session_id,
                 message=payload.message,
                 stream=False,
             ) as observation:
                 try:
                     result = await graph.ainvoke(
                         {"messages": [HumanMessage(content=payload.message)]},
-                        config=_build_config(payload.thread_id),
+                        config=_build_config(payload.session_id),
                     )
                 except Exception as exc:
                     observation.update(level="ERROR", status_message=str(exc))
@@ -68,19 +68,19 @@ async def _stream_response(graph, langfuse_service, payload: ChatRequest) -> Asy
     chunks: list[str] = []
 
     try:
-        with langfuse_service.propagate_thread_context(
-            thread_id=payload.thread_id,
+        with langfuse_service.propagate_session_context(
+            session_id=payload.session_id,
             trace_name="chat.stream",
         ):
             with langfuse_service.start_request(
-                thread_id=payload.thread_id,
+                session_id=payload.session_id,
                 message=payload.message,
                 stream=True,
             ) as observation:
                 try:
                     async for chunk, _metadata in graph.astream(
                         {"messages": [HumanMessage(content=payload.message)]},
-                        config=_build_config(payload.thread_id),
+                        config=_build_config(payload.session_id),
                         stream_mode="messages",
                     ):
                         if isinstance(chunk, AIMessageChunk):
