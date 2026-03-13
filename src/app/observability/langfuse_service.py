@@ -40,24 +40,24 @@ class LangfuseService:
     def start_request(
         self,
         *,
-        session_id: str,
+        thread_id: str,
         message: str,
         stream: bool,
     ) -> AbstractContextManager[ObservationClient]:
         if not self._enabled:
             return nullcontext(NoopObservationClient())
 
-        normalized_session_id = self._normalize_identifier(session_id)
+        normalized_thread_id = self._normalize_identifier(thread_id)
         return self._client.start_as_current_observation(
             name="chat.request",
             as_type="chain",
             input={
                 "message": message,
-                "session_id": normalized_session_id,
+                "thread_id": normalized_thread_id,
                 "stream": stream,
             },
             metadata={
-                "session_id": normalized_session_id,
+                "thread_id": normalized_thread_id,
                 "stream": str(stream).lower(),
             },
         )
@@ -65,31 +65,31 @@ class LangfuseService:
     def start_generation(
         self,
         *,
-        session_id: str,
+        thread_id: str,
         model_name: str,
         messages: list[BaseMessage],
     ) -> AbstractContextManager[ObservationClient]:
         if not self._enabled:
             return nullcontext(NoopObservationClient())
 
-        normalized_session_id = self._normalize_identifier(session_id)
+        normalized_thread_id = self._normalize_identifier(thread_id)
         return self._client.start_as_current_observation(
             name="chat.generation",
             as_type="generation",
             model=model_name,
             input=self._serialize_messages(messages),
-            metadata={"session_id": normalized_session_id},
+            metadata={"thread_id": normalized_thread_id},
         )
 
-    def propagate_session_context(self, *, session_id: str, trace_name: str) -> AbstractContextManager[None]:
+    def propagate_thread_context(self, *, thread_id: str, trace_name: str) -> AbstractContextManager[None]:
         if not self._enabled:
             return nullcontext(None)
 
-        normalized_session_id = self._normalize_identifier(session_id)
+        normalized_thread_id = self._normalize_identifier(thread_id)
         return propagate_attributes(
-            session_id=normalized_session_id,
+            session_id=normalized_thread_id,
             trace_name=trace_name,
-            metadata={"session_id": normalized_session_id},
+            metadata={"thread_id": normalized_thread_id},
         )
 
     def flush(self) -> None:

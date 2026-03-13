@@ -1,5 +1,8 @@
+from collections.abc import AsyncIterator
+
 from dependency_injector import containers, providers
 from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph.state import CompiledStateGraph
 from langchain_openai import ChatOpenAI
 
@@ -9,7 +12,34 @@ from app.core.config import Settings
 from app.observability.langfuse_service import LangfuseService
 
 
+async def create_async_redis_saver(settings: Settings) -> AsyncIterator[AsyncRedisSaver]:
+    saver = AsyncRedisSaver(
+        redis_url=settings.REDIS_SAVER_CONNECTION_STRING,
+    )
+    await saver.asetup()
+
+    try:
+        yield saver
+    finally:
+        await saver.__aexit__(None, None, None)
+
+
+def create_graph(
+    graph_builder: GraphBuilder,
+) -> CompiledStateGraph:
+    return graph_builder.build()
+
+
 class Container(containers.DeclarativeContainer):
+    wiring_config = containers.WiringConfiguration(
+        packages=[
+            "app",
+            "app.chat",
+            "app.api.v1",
+            "app.api.v1.chat",
+        ],
+    )
+
     settings: providers.Singleton[Settings] = providers.Singleton(Settings)
 
     langfuse_service = providers.Singleton(
@@ -46,15 +76,21 @@ class Container(containers.DeclarativeContainer):
         file_tools,
     )
 
+    async_redis_saver = providers.Resource(
+        create_async_redis_saver,
+        settings=settings,
+    )
+
     graph_builder = providers.Factory(
         GraphBuilder,
         llm=llm,
         slm=slm,
         tools=tools,
         langfuse_service=langfuse_service,
+        checkpointer=async_redis_saver,
     )
 
     graph: providers.Singleton[CompiledStateGraph] = providers.Singleton(
-        lambda builder: builder.build(),
-        graph_builder,
+        create_graph,
+        graph_builder=graph_builder,
     )
