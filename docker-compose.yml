@@ -1,0 +1,54 @@
+services:
+  redis:
+    image: redis/redis-stack-server:7.4.0-v8
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    networks:
+      - dev_network
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me}
+      REDIS_ARGS: --save 1 1 --requirepass ${REDIS_PASSWORD:-change_me}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli -a "$${REDIS_PASSWORD}" ping
+      interval: 3s
+      timeout: 10s
+      retries: 10
+
+  redis_insight:
+    image: ${DOCKER_IO_BASE_URL:-docker.io}/redis/redisinsight:2.70.1
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${REDIS_INSIGHT_PORT:-8002}:8001"
+    networks:
+      - dev_network
+    environment:
+      RI_APP_PORT: "8001"
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+    volumes:
+      - redis_insight_data:/data
+
+networks:
+  dev_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  redis_insight_data:

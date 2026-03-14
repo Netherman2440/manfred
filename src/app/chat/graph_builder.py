@@ -1,4 +1,5 @@
 from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -15,11 +16,13 @@ class GraphBuilder:
         slm: BaseChatModel,
         tools: list,
         langfuse_service: LangfuseService,
+        checkpointer: BaseCheckpointSaver | None = None,
     ) -> None:
         self.llm = llm
         self.slm = slm
         self.tools = tools
         self.langfuse_service = langfuse_service
+        self.checkpointer = checkpointer
 
     def build(self) -> CompiledStateGraph:
         workflow = StateGraph(GraphState)
@@ -44,4 +47,4 @@ class GraphBuilder:
         )
         workflow.add_edge("tools", "chat")
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=self.checkpointer)

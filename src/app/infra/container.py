@@ -1,7 +1,12 @@
+import asyncio
+from collections.abc import AsyncIterator
+
 from dependency_injector import containers, providers
 from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph.state import CompiledStateGraph
 from langchain_openai import ChatOpenAI
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.chat.graph_builder import GraphBuilder
 from app.chat.tools.files import FileTools
@@ -9,7 +14,34 @@ from app.core.config import Settings
 from app.observability.langfuse_service import LangfuseService
 
 
+async def create_async_redis_saver(settings: Settings) -> AsyncIterator[AsyncRedisSaver]:
+    saver = AsyncRedisSaver(
+        redis_url=settings.REDIS_SAVER_CONNECTION_STRING,
+    )
+    await _setup_async_redis_saver(saver)
+
+    try:
+        yield saver
+    finally:
+        await saver.__aexit__(None, None, None)
+
+
+def create_graph(
+    graph_builder: GraphBuilder,
+) -> CompiledStateGraph:
+    return graph_builder.build()
+
+
 class Container(containers.DeclarativeContainer):
+    wiring_config = containers.WiringConfiguration(
+        packages=[
+            "app",
+            "app.chat",
+            "app.api.v1",
+            "app.api.v1.chat",
+        ],
+    )
+
     settings: providers.Singleton[Settings] = providers.Singleton(Settings)
 
     langfuse_service = providers.Singleton(
@@ -46,15 +78,42 @@ class Container(containers.DeclarativeContainer):
         file_tools,
     )
 
+    async_redis_saver = providers.Resource(
+        create_async_redis_saver,
+        settings=settings,
+    )
+
     graph_builder = providers.Factory(
         GraphBuilder,
         llm=llm,
         slm=slm,
         tools=tools,
         langfuse_service=langfuse_service,
+        checkpointer=async_redis_saver,
     )
 
     graph: providers.Singleton[CompiledStateGraph] = providers.Singleton(
-        lambda builder: builder.build(),
-        graph_builder,
+        create_graph,
+        graph_builder=graph_builder,
     )
+
+
+async def _setup_async_redis_saver(
+    saver: AsyncRedisSaver,
+    attempts: int = 10,
+    delay_seconds: float = 0.5,
+) -> None:
+    last_error: RedisConnectionError | None = None
+
+    for attempt in range(attempts):
+        try:
+            await saver.asetup()
+            return
+        except RedisConnectionError as error:
+            last_error = error
+            if attempt == attempts - 1:
+                break
+            await asyncio.sleep(delay_seconds)
+
+    if last_error is not None:
+        raise last_error

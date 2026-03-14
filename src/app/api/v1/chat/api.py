@@ -1,22 +1,18 @@
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Request
+from dependency_injector.wiring import Provide, inject
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
 
 from app.api.v1.chat.schema import ChatRequest, ChatResponse
+from app.infra.container import Container
+from app.observability.langfuse_service import LangfuseService
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-
-def _get_graph(request: Request):
-    return request.app.container.graph()
-
-
-def _get_langfuse_service(request: Request):
-    return request.app.container.langfuse_service()
 
 
 def _build_config(thread_id: str) -> RunnableConfig:
@@ -33,10 +29,12 @@ def _extract_ai_text(messages: list[BaseMessage]) -> str:
 
 
 @router.post("", response_model=ChatResponse)
-async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
-    graph = _get_graph(request)
-    langfuse_service = _get_langfuse_service(request)
-
+@inject
+async def chat(
+    payload: ChatRequest,
+    graph: CompiledStateGraph = Depends(Provide[Container.graph]),
+    langfuse_service: LangfuseService = Depends(Provide[Container.langfuse_service]),
+) -> ChatResponse:
     try:
         with langfuse_service.propagate_thread_context(
             thread_id=payload.thread_id,
@@ -98,9 +96,12 @@ async def _stream_response(graph, langfuse_service, payload: ChatRequest) -> Asy
 
 
 @router.post("/stream")
-async def stream_chat(payload: ChatRequest, request: Request) -> StreamingResponse:
-    graph = _get_graph(request)
-    langfuse_service = _get_langfuse_service(request)
+@inject
+async def stream_chat(
+    payload: ChatRequest,
+    graph: CompiledStateGraph = Depends(Provide[Container.graph]),
+    langfuse_service: LangfuseService = Depends(Provide[Container.langfuse_service]),
+) -> StreamingResponse:
     return StreamingResponse(
         _stream_response(graph, langfuse_service, payload),
         media_type="text/plain; charset=utf-8",
