@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     DESCRIPTION: str = "Agent API built on LangGraph"
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 3333
-    REDIS_SAVER_CONNECTION_STRING: str = "redis://:change_me@127.0.0.1:6379/0"
+    REDIS_SAVER_CONNECTION_STRING: str = "redis://:change_me@127.0.0.1:6380/0"
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""

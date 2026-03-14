@@ -25,14 +25,18 @@ Przed uruchomieniem API odpal lokalnego Redisa, bo checkpointy i kontekst rozmow
 Z katalogu głównego repo:
 
 ```bash
-docker compose --env-file src/.env up -d
+docker compose --env-file src/.env up -d --wait
 ```
+
+`--wait` jest istotne, bo w trybie detached Compose zwraca sterowanie zanim Redis zacznie przyjmowac polaczenia.
 
 W `src/.env` ustaw co najmniej:
 
 ```bash
 REDIS_PASSWORD=change_me
-REDIS_SAVER_CONNECTION_STRING=redis://:change_me@127.0.0.1:6379/0
+REDIS_PORT=6380
+REDIS_INSIGHT_PORT=8002
+REDIS_SAVER_CONNECTION_STRING=redis://:change_me@127.0.0.1:6380/0
 ```
 
 ## Langfuse

@@ -1,17 +1,13 @@
 services:
   redis:
     image: redis/redis-stack-server:7.4.0-v8
-    container_name: redis
-    command:
-      - sh
-      - -c
-      - exec redis-server --save 1 1 --requirepass "$${REDIS_PASSWORD}"
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     networks:
       - dev_network
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-change_me}
+      REDIS_ARGS: --save 1 1 --requirepass ${REDIS_PASSWORD:-change_me}
     deploy:
       resources:
         limits:
@@ -29,12 +25,11 @@ services:
 
   redis_insight:
     image: ${DOCKER_IO_BASE_URL:-docker.io}/redis/redisinsight:2.70.1
-    container_name: redis_insight
     depends_on:
       redis:
         condition: service_healthy
     ports:
-      - "${REDIS_INSIGHT_PORT:-8001}:8001"
+      - "${REDIS_INSIGHT_PORT:-8002}:8001"
     networks:
       - dev_network
     environment:

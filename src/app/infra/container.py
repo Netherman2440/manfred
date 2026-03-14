@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 
 from dependency_injector import containers, providers
@@ -5,6 +6,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph.state import CompiledStateGraph
 from langchain_openai import ChatOpenAI
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from app.chat.graph_builder import GraphBuilder
 from app.chat.tools.files import FileTools
@@ -16,7 +18,7 @@ async def create_async_redis_saver(settings: Settings) -> AsyncIterator[AsyncRed
     saver = AsyncRedisSaver(
         redis_url=settings.REDIS_SAVER_CONNECTION_STRING,
     )
-    await saver.asetup()
+    await _setup_async_redis_saver(saver)
 
     try:
         yield saver
@@ -94,3 +96,24 @@ class Container(containers.DeclarativeContainer):
         create_graph,
         graph_builder=graph_builder,
     )
+
+
+async def _setup_async_redis_saver(
+    saver: AsyncRedisSaver,
+    attempts: int = 10,
+    delay_seconds: float = 0.5,
+) -> None:
+    last_error: RedisConnectionError | None = None
+
+    for attempt in range(attempts):
+        try:
+            await saver.asetup()
+            return
+        except RedisConnectionError as error:
+            last_error = error
+            if attempt == attempts - 1:
+                break
+            await asyncio.sleep(delay_seconds)
+
+    if last_error is not None:
+        raise last_error
