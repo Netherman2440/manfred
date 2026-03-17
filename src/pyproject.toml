@@ -1,0 +1,6 @@
+[project]
+name = "manfred"
+version = "0.1.0"
+description = "Repo for the Manfred AI agent"
+requires-python = ">=3.12"
+dependencies = []
