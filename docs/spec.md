@@ -4,19 +4,19 @@
 
 Statusy używane w planie: `todo`, `in progress`, `done`.
 
-1. `todo` Ustalić i zaimplementować warstwę domenową dla aktualnego zakresu:
+1. `done` Ustalić i zaimplementować warstwę domenową dla aktualnego zakresu:
    `ChatRequest`, `User`, `Session`, `Agent`, `Item`, `PreparedChat`.
-2. `todo` Zbudować warstwę persistence:
+2. `done` Zbudować warstwę persistence:
    modele SQLAlchemy, przy czym każdy model ma trafić do osobnego pliku w `src/app/db/models/`.
-3. `todo` Przygotować inicjalną migrację bazy danych:
+3. `done` Przygotować inicjalną migrację bazy danych:
    pierwsza migracja ma utworzyć tabele potrzebne dla `User`, `Session`, `Agent` i `Item`.
-4. `todo` Dodać warstwę repozytoriów w `src/app/db/repositories/`:
+4. `done` Dodać warstwę repozytoriów w `src/app/db/repositories/`:
    po jednym repozytorium na model, wyłącznie z czystym CRUD-em, bez składania logiki biznesowej między modelami.
-5. `todo` Dodać serwisy aplikacyjne w `src/app/services/`:
-   w szczególności `session_service` z metodą `create_session(msg)` oraz rejestrację serwisów w kontenerze DI tak, aby były wstrzykiwane do API przez `Depends`.
-6. `todo` Zaimplementować `POST /api/chat/completions` w ograniczonym zakresie:
+5. `done` Dodać serwisy aplikacyjne w `src/app/services/`:
+   na obecnym etapie rolę przygotowania czatu pełni `chat_service`; serwis jest rejestrowany w kontenerze DI i wstrzykiwany do API przez `Depends`.
+6. `done` Zaimplementować `POST /api/chat/completions` w ograniczonym zakresie:
    request ma przyjmować tylko `message` oraz opcjonalne `sessionId`; gdy `sessionId` nie zostanie podane, endpoint tworzy nową sesję.
-7. `todo` Przygotować składanie kontekstu wejściowego agenta w `chat_service.py` bez uruchamiania pętli wykonania:
+7. `done` Przygotować składanie kontekstu wejściowego agenta w `chat_service.py` bez uruchamiania pętli wykonania:
    utworzyć `PreparedChat`, ładować `agent config` z kontenera, wyznaczać `tools` na podstawie konfiguracji agenta, budować `agent input` tak, aby system prompt nie trafiał do sesji, trzymać `task` w konfiguracji agenta i na razie ładować samą sesję bez itemów.
 8. `todo` Kolejny krok:
    zaimplementować pętlę wykonywania agenta; rozpisanie tej pętli i jej implementacja są celowo odłożone do następnego etapu prac.

@@ -1,11 +1,39 @@
-from container import Container
+from fastapi import FastAPI
+import uvicorn
+from app.api.v1.api import api_router
+from app.container import Container
+
+APP_FACTORY_PATH = "app.main:create_app"
 
 container = Container()
 
-def main():
+def create_app() -> FastAPI:
+    settings = container.settings()
     container.wire()
 
-    #todo: fast api setup
+    app = FastAPI(
+        title=settings.PROJECT_NAME,
+        version=settings.VERSION,
+        description=settings.DESCRIPTION,
+    )
+    app.container = container
+    app.include_router(api_router, prefix=settings.API_V1_STR)
+    return app
+
+
+
+app = create_app()
+
+def run() -> None:
+    settings = container.settings()
+    uvicorn.run(
+        APP_FACTORY_PATH,
+        factory=True,
+        host=settings.API_HOST,
+        port=settings.API_PORT,
+        reload=settings.API_RELOAD,
+    )
+
 
 if __name__ == "__main__":
-    main()
+    run()
