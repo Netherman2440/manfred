@@ -1,5 +1,26 @@
 # Specyfikacja migracji przykładu `01_05_agent` z TypeScript do Pythona
 
+## Plan implementacji
+
+Statusy używane w planie: `todo`, `in progress`, `done`.
+
+1. `todo` Ustalić i zaimplementować warstwę domenową dla aktualnego zakresu:
+   `ChatRequest`, `User`, `Session`, `Agent`, `Item`, `PreparedChat`.
+2. `todo` Zbudować warstwę persistence:
+   modele SQLAlchemy, przy czym każdy model ma trafić do osobnego pliku w `src/app/db/models/`.
+3. `todo` Przygotować inicjalną migrację bazy danych:
+   pierwsza migracja ma utworzyć tabele potrzebne dla `User`, `Session`, `Agent` i `Item`.
+4. `todo` Dodać warstwę repozytoriów w `src/app/db/repositories/`:
+   po jednym repozytorium na model, wyłącznie z czystym CRUD-em, bez składania logiki biznesowej między modelami.
+5. `todo` Dodać serwisy aplikacyjne w `src/app/services/`:
+   w szczególności `session_service` z metodą `create_session(msg)` oraz rejestrację serwisów w kontenerze DI tak, aby były wstrzykiwane do API przez `Depends`.
+6. `todo` Zaimplementować `POST /api/chat/completions` w ograniczonym zakresie:
+   request ma przyjmować tylko `message` oraz opcjonalne `sessionId`; gdy `sessionId` nie zostanie podane, endpoint tworzy nową sesję.
+7. `todo` Przygotować składanie kontekstu wejściowego agenta w `chat_service.py` bez uruchamiania pętli wykonania:
+   utworzyć `PreparedChat`, ładować `agent config` z kontenera, wyznaczać `tools` na podstawie konfiguracji agenta, budować `agent input` tak, aby system prompt nie trafiał do sesji, trzymać `task` w konfiguracji agenta i na razie ładować samą sesję bez itemów.
+8. `todo` Kolejny krok:
+   zaimplementować pętlę wykonywania agenta; rozpisanie tej pętli i jej implementacja są celowo odłożone do następnego etapu prac.
+
 ## Cel dokumentu
 
 Celem jest opisanie pełnego zakresu przykładu `4th-devs/01_05_agent` w formie specyfikacji dla implementacji w repozytorium `manfred`. Dokument koncentruje się na zachowaniu systemu, architekturze oraz kluczowych elementach pętli agenta, a nie na translacji 1:1 kodu TypeScript.
@@ -258,6 +279,24 @@ Ważne zachowania do zachowania:
 - parametry requestu mogą nadpisać ustawienia wynikające z szablonu,
 - szablon może odwoływać się zarówno do narzędzi wbudowanych, jak i MCP.
 
+## Składanie kontekstu LLM
+
+Budowanie requestu do modelu jest osobnym etapem systemu i nie powinno być rozproszone po endpointach ani providerach.
+
+Kontekst dla pojedynczego wywołania LLM musi powstawać przez scalenie:
+
+- definicji agenta z pliku markdown,
+- override'ów przekazanych w requestcie,
+- definicji narzędzi rozwiązanych po nazwach,
+- stanu sesji i zapisanych itemów.
+
+Wymagane zasady:
+
+- template jest odczytywany z dysku per request,
+- override'y z API mają pierwszeństwo nad wartościami z template,
+- lista narzędzi przekazywana do providera zawiera kompletne schemy function calling,
+- historia sesji jest częścią wejścia do budowy kontekstu, ale podlega pruningowi i summarization.
+
 ## API wymagane przez migrację
 
 ### `POST /api/chat/completions`
@@ -504,6 +543,62 @@ Streaming ma przekazywać ujednolicone eventy opisujące:
 
 Streaming nie zastępuje persistence. Strumień jest tylko kanałem do klienta; źródłem prawdy pozostają zapisane itemy i stan agenta.
 
+## Kontrakt zdarzeń i przebieg event flow
+
+Zdarzenia są częścią architektury systemu, a nie wyłącznie implementacją logowania. Pythonowa migracja ma je traktować jako stabilny kontrakt wewnętrzny runtime.
+
+Każde zdarzenie powinno zawierać wspólny kontekst korelacyjny, co najmniej:
+
+- `traceId`,
+- `sessionId`,
+- `agentId`,
+- `rootAgentId`,
+- `parentAgentId` jeśli istnieje,
+- `depth`,
+- timestamp zdarzenia.
+
+Minimalny katalog zdarzeń do zachowania:
+
+- `agent.started`,
+- `turn.started`,
+- `tool.called`,
+- `tool.completed`,
+- `tool.failed`,
+- `turn.completed`,
+- `agent.waiting`,
+- `agent.resumed`,
+- `agent.completed`,
+- `agent.failed`,
+- `agent.cancelled`,
+- zdarzenia związane z generacją modelu,
+- zdarzenia związane ze streamingiem.
+
+Typowy przebieg dla zakończonej tury powinien wyglądać następująco:
+
+1. `agent.started`
+2. `turn.started`
+3. `generation.completed`
+4. zero lub więcej par `tool.called` i `tool.completed` albo `tool.failed`
+5. `turn.completed`
+6. `agent.completed` albo kolejne `turn.started`
+
+Typowy przebieg dla stanu oczekiwania:
+
+1. `agent.started`
+2. `turn.started`
+3. `generation.completed`
+4. `turn.completed`
+5. `agent.waiting`
+6. po `deliver`: `agent.resumed`
+7. wznowienie kolejnej tury albo `agent.completed`
+
+Ważne konsekwencje projektowe:
+
+- logowanie, tracing i monitoring mają być budowane na bazie tych zdarzeń,
+- zdarzenia muszą opisywać zarówno sukces, jak i błąd narzędzia,
+- delegacja ma zachowywać ciągłość korelacji między parent i child agentem,
+- event stream nie może zależeć od konkretnego providera.
+
 ## Bezpieczeństwo i kontrola dostępu
 
 Pythonowa wersja musi zachować następujące założenia:
@@ -533,6 +628,75 @@ Podczas zamykania system musi:
 - domknąć zasoby runtime,
 - zamknąć połączenia MCP,
 - wypchnąć tracing i logi, jeśli to możliwe.
+
+## Decyzje techniczne dla implementacji w `manfred`
+
+Poniższe decyzje techniczne stanowią część docelowej specyfikacji migracji dla repozytorium `manfred`.
+
+### Stos aplikacyjny
+
+Docelowy stos ma być następujący:
+
+- `FastAPI` dla warstwy HTTP,
+- `Pydantic` dla schematów API i konfiguracji,
+- `SQLAlchemy ORM` dla modeli persistence,
+- `Alembic` dla migracji bazy,
+- kontener zależności w `container.py` jako centralny punkt składania aplikacji.
+
+Migracja nie ma odtwarzać `drizzle`, tylko zachowanie systemu na bazie idiomatycznego stosu Pythona.
+
+### Konfiguracja
+
+Zasady konfiguracji:
+
+- wszystkie zmienne środowiskowe mają być mapowane do `config.py`,
+- `config.py` może zawierać bezpieczne wartości domyślne tam, gdzie to uzasadnione,
+- kod aplikacji powinien czytać ustawienia z configu, nie bezpośrednio z `os.environ`,
+- każda zmiana w konfiguracji wymaga aktualizacji pliku `.env.EXAMPLE`.
+
+### Kontener zależności
+
+`container.py` ma być źródłem prawdy dla obiektów współdzielonych w aplikacji. To tam powinny być definiowane:
+
+- konfiguracja aplikacji,
+- providerzy LLM,
+- runtime state,
+- repozytoria,
+- rejestr narzędzi,
+- zewnętrzne serwisy używane przez narzędzia,
+- inne singletony i fabryki potrzebne podczas działania aplikacji.
+
+Zasady użycia:
+
+- w endpointach FastAPI zależności wstrzykujemy przez `Depends()`,
+- obiekty dostarczane do endpointów mają pochodzić z kontenera,
+- nie tworzymy providerów, repozytoriów i serwisów ad hoc wewnątrz route handlerów,
+- przekazywanie configu do zależności ma być scentralizowane w kontenerze.
+
+### Narzędzia
+
+Zasady organizacji tooli:
+
+- jeden tool to jeden plik,
+- definicja narzędzia i handler pozostają rozdzielone w obrębie tego samego pliku,
+- jeśli kilka tooli dotyczy jednego obszaru, powinny leżeć we wspólnym podkatalogu `src/app/agent/tools`,
+- tool może zależeć od zewnętrznych serwisów, ale te zależności mają być dostarczane przez kontener,
+- rejestracja tooli dostępnych dla runtime ma być wykonywana centralnie w kontenerze.
+
+To oznacza, że kontener odpowiada zarówno za:
+
+- konstrukcję serwisów potrzebnych przez toole,
+- konstrukcję instancji tooli,
+- zdefiniowanie listy tooli aktywnych w danym uruchomieniu aplikacji.
+
+### Persistence i migracje
+
+Zasady dla warstwy danych:
+
+- modele persistence definiujemy w SQLAlchemy ORM,
+- zmiany schematu wprowadzamy przez Alembic,
+- schema runtime i migracje muszą pozostać ze sobą spójne,
+- warstwa repozytoriów pozostaje oddzielona od modeli API i od logiki endpointów.
 
 ## Obserwowalność
 
