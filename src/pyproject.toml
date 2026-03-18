@@ -3,4 +3,10 @@ name = "manfred"
 version = "0.1.0"
 description = "Repo for the Manfred AI agent"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "alembic>=1.18.4",
+    "dependency-injector>=4.48.3",
+    "fastapi>=0.135.1",
+    "pydantic-settings>=2.13.1",
+    "sqlalchemy>=2.0,<3.0",
+]
