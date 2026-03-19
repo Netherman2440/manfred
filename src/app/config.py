@@ -1,4 +1,9 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
@@ -46,3 +51,4 @@ class Settings(BaseSettings):
 
     AI_DEVS_API_KEY: str = ""
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
+    WORKSPACE_ROOT: str = str(BASE_DIR / "workspace")

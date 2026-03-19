@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-from app.agent.tools import calculator_tool
+from app.agent.tools import calculator_tool, filesystem_tools
 from app.db.repositories import (
     AgentRepository,
     ItemRepository,
@@ -37,7 +37,7 @@ def load_system_prompt(path: str) -> str:
 
 
 def get_tools() -> list[Tool]:
-    return [calculator_tool]
+    return [calculator_tool, *filesystem_tools]
 
 
 def build_tool_registry() -> ToolRegistry:
