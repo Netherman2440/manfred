@@ -1,5 +1,4 @@
 import json
-import uuid
 
 from app.db.repositories.agent_repository import AgentRepository
 from app.db.repositories.item_repository import ItemRepository
@@ -24,6 +23,7 @@ from app.domain import (
     prepare_agent_for_next_turn,
 )
 from app.runtime import AgentRunner
+from app.services.observability import ObservabilityService
 
 
 class ChatService:
@@ -37,6 +37,7 @@ class ChatService:
         agent_config: AgentConfig,
         tool_registry: ToolRegistry,
         agent_runner: AgentRunner,
+        observability: ObservabilityService,
         default_user_id: str,
         default_user_name: str,
     ) -> None:
@@ -47,6 +48,7 @@ class ChatService:
         self._agent_config = agent_config
         self._tool_registry = tool_registry
         self._agent_runner = agent_runner
+        self._observability = observability
         self._default_user_id = default_user_id
         self._default_user_name = default_user_name
 
@@ -56,7 +58,7 @@ class ChatService:
         session = self._load_session(request.session_id, user)
         tools = self._resolve_tools(self._agent_config.tool_names)
         agent = self._load_or_create_root_agent(session)
-        trace_id = str(uuid.uuid4())
+        trace_id = self._observability.create_trace_id()
         response_start_sequence = self._item_repository.get_last_sequence(agent.id)
         user_item = self._create_user_message_item(session, agent, request.message, response_start_sequence + 1)
 
@@ -71,16 +73,45 @@ class ChatService:
         )
 
     async def process_chat(self, request: ChatRequest) -> ChatResponse:
-
         chat_turn = self.prepare_chat_turn(request)
+        with self._observability.start_chat_turn(
+            trace_id=chat_turn.trace_id,
+            session_id=chat_turn.session.id,
+            user_id=chat_turn.user.id,
+            agent_id=chat_turn.agent.id,
+            message=request.message,
+        ):
+            self._observability.record_item(chat_turn.user_item)
 
-        run_result = await self._agent_runner.run_agent(chat_turn.agent.id)
+            try:
+                run_result = await self._agent_runner.run_agent(chat_turn.agent.id)
+                items = self._item_repository.list_by_agent(chat_turn.agent.id)
+                visible_items = self._filter_response_items(items, chat_turn.response_start_sequence)
+                response = self._to_chat_response(chat_turn, run_result.agent, visible_items, error=run_result.error)
+            except Exception as exc:
+                error_message = str(exc) or "Chat processing failed."
+                self._observability.update_current_span(
+                    level="ERROR",
+                    status_message=error_message,
+                )
+                self._observability.record_error(
+                    name="chat.turn.failed",
+                    error=error_message,
+                    metadata={"agent_id": chat_turn.agent.id, "session_id": chat_turn.session.id},
+                )
+                raise
 
-        items = self._item_repository.list_by_agent(chat_turn.agent.id)
-
-        visible_items = self._filter_response_items(items, chat_turn.response_start_sequence)
-
-        return self._to_chat_response(chat_turn, run_result.agent, visible_items, error=run_result.error)
+            self._observability.update_current_span(
+                output=self._serialize_response_for_observability(response),
+                metadata={
+                    "status": response.status,
+                    "item_count": len(visible_items),
+                },
+                level="ERROR" if response.status == "failed" else None,
+                status_message=response.error,
+            )
+            self._observability.flush()
+            return response
 
 
     def _ensure_default_user(self) -> User:
@@ -217,3 +248,14 @@ class ChatService:
         if isinstance(parsed, dict):
             return parsed
         return {}
+
+    @staticmethod
+    def _serialize_response_for_observability(response: ChatResponse) -> dict[str, object]:
+        return {
+            "session_id": response.session_id,
+            "agent_id": response.agent_id,
+            "model": response.model,
+            "status": response.status,
+            "error": response.error,
+            "output": response.output,
+        }

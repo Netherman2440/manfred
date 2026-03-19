@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "openrouter"
 
 #agent config
-    SYSTEM_PROMPT_PATH: str = "app/prompts/system_prompt.md"
+    SYSTEM_PROMPT_PATH: str = "app/agent/prompts/system_prompt.md"
 # optional temperature etc
 
     OPENAI_URL: str = "https://api.openai.com/v1"

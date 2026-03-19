@@ -28,6 +28,7 @@ from app.domain import (
     start_agent,
 )
 from app.domain.provider import Provider
+from app.services.observability import ObservabilityService
 
 
 @dataclass(slots=True, frozen=True)
@@ -52,6 +53,7 @@ class AgentRunner:
         item_repository: ItemRepository,
         tool_registry: ToolRegistry,
         provider: Provider,
+        observability: ObservabilityService,
         max_turn_count: int,
     ) -> None:
         self._agent_repository = agent_repository
@@ -59,6 +61,7 @@ class AgentRunner:
         self._item_repository = item_repository
         self._tool_registry = tool_registry
         self._provider = provider
+        self._observability = observability
         self._max_turn_count = max_turn_count
 
     async def run_agent(self, agent_id: str) -> RunResult:
@@ -79,11 +82,21 @@ class AgentRunner:
             try:
                 turn_result = await self.execute_turn(agent, session)
             except Exception as exc:  # noqa: BLE001
+                error_message = str(exc) or "Turn execution failed."
+                self._observability.update_current_span(
+                    level="ERROR",
+                    status_message=error_message,
+                )
+                self._observability.record_error(
+                    name="agent.run.failed",
+                    error=error_message,
+                    metadata={"agent_id": agent.id, "session_id": session.id},
+                )
                 failed_agent = self._agent_repository.update(fail_agent(agent))
                 return RunResult(
                     agent=failed_agent,
                     status="failed",
-                    error=str(exc) or "Turn execution failed.",
+                    error=error_message,
                 )
 
             agent = turn_result.agent
@@ -111,7 +124,33 @@ class AgentRunner:
             items=self._map_items_to_provider_input(items),
             tools=self._resolve_function_tools(agent),
         )
-        response = self._provider.generate(provider_input)
+        with self._observability.start_generation(
+            model=provider_input.model,
+            input_payload=self._serialize_provider_input(provider_input),
+            metadata={
+                "agent_id": agent.id,
+                "item_count": len(provider_input.items),
+                "tool_count": len(provider_input.tools),
+            },
+        ):
+            try:
+                response = self._provider.generate(provider_input)
+            except Exception as exc:
+                error_message = str(exc) or "Provider request failed."
+                self._observability.update_current_generation(
+                    level="ERROR",
+                    status_message=error_message,
+                )
+                self._observability.record_error(
+                    name="llm.generate.failed",
+                    error=error_message,
+                    metadata={"agent_id": agent.id, "session_id": session.id},
+                )
+                raise
+
+            self._observability.update_current_generation(
+                output=self._serialize_provider_response(response),
+            )
 
         turn_result = await self.handle_turn_response(agent, session, response)
         updated_agent = self._agent_repository.update(increment_agent_turn(turn_result.agent))
@@ -129,7 +168,7 @@ class AgentRunner:
         for output_item in response.output:
             sequence += 1
             if isinstance(output_item, ProviderTextOutput):
-                self._item_repository.create(
+                item = self._item_repository.create(
                     session_id=session.id,
                     agent_id=agent.id,
                     sequence=sequence,
@@ -137,10 +176,11 @@ class AgentRunner:
                     role=MessageRole.ASSISTANT,
                     content=output_item.text,
                 )
+                self._observability.record_item(item)
                 continue
 
             if isinstance(output_item, ProviderFunctionCall):
-                self._item_repository.create(
+                item = self._item_repository.create(
                     session_id=session.id,
                     agent_id=agent.id,
                     sequence=sequence,
@@ -149,25 +189,37 @@ class AgentRunner:
                     name=output_item.name,
                     arguments_json=json.dumps(output_item.arguments),
                 )
+                self._observability.record_item(item)
                 function_calls.append(output_item)
 
         if not function_calls:
             return TurnResult(agent=complete_agent(agent), continue_loop=False)
 
         for function_call in function_calls:
-            tool = self._tool_registry.get(function_call.name)
-            if tool is None:
-                tool_result = {"ok": False, "error": f"Tool not found: {function_call.name}"}
-            elif tool.type != "sync":
-                tool_result = {
-                    "ok": False,
-                    "error": f"Unsupported tool type: {tool.type}",
-                }
-            else:
-                tool_result = await self._tool_registry.execute(function_call.name, function_call.arguments)
+            with self._observability.start_tool_execution(
+                name=function_call.name,
+                call_id=function_call.call_id,
+                input_payload=function_call.arguments,
+            ):
+                tool = self._tool_registry.get(function_call.name)
+                if tool is None:
+                    tool_result = {"ok": False, "error": f"Tool not found: {function_call.name}"}
+                elif tool.type != "sync":
+                    tool_result = {
+                        "ok": False,
+                        "error": f"Unsupported tool type: {tool.type}",
+                    }
+                else:
+                    tool_result = await self._tool_registry.execute(function_call.name, function_call.arguments)
+
+                self._observability.update_current_span(
+                    output=tool_result,
+                    level="ERROR" if not bool(tool_result.get("ok")) else None,
+                    status_message=str(tool_result.get("error")) if tool_result.get("error") is not None else None,
+                )
 
             sequence += 1
-            self._item_repository.create(
+            item = self._item_repository.create(
                 session_id=session.id,
                 agent_id=agent.id,
                 sequence=sequence,
@@ -177,6 +229,7 @@ class AgentRunner:
                 output=self._serialize_tool_result_output(tool_result),
                 is_error=not bool(tool_result.get("ok")),
             )
+            self._observability.record_item(item)
 
         return TurnResult(agent=agent, continue_loop=True)
 
@@ -258,3 +311,65 @@ class AgentRunner:
             return json.loads(output)
         except json.JSONDecodeError:
             return output
+
+    @staticmethod
+    def _serialize_provider_input(provider_input: ProviderInput) -> dict[str, Any]:
+        return {
+            "model": provider_input.model,
+            "instructions": provider_input.instructions,
+            "items": [AgentRunner._serialize_provider_item(item) for item in provider_input.items],
+            "tools": [
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                }
+                for tool in provider_input.tools
+            ],
+        }
+
+    @staticmethod
+    def _serialize_provider_item(
+        item: ProviderMessageInput | ProviderFunctionCallInput | ProviderFunctionResultInput,
+    ) -> dict[str, Any]:
+        if isinstance(item, ProviderMessageInput):
+            return {
+                "type": item.type,
+                "role": item.role,
+                "content": item.content,
+            }
+
+        if isinstance(item, ProviderFunctionCallInput):
+            return {
+                "type": item.type,
+                "call_id": item.call_id,
+                "name": item.name,
+                "arguments": item.arguments,
+            }
+
+        return {
+            "type": item.type,
+            "call_id": item.call_id,
+            "name": item.name,
+            "output": item.output,
+            "is_error": item.is_error,
+        }
+
+    @staticmethod
+    def _serialize_provider_response(response: ProviderResponse) -> dict[str, Any]:
+        output: list[dict[str, Any]] = []
+        for item in response.output:
+            if isinstance(item, ProviderTextOutput):
+                output.append({"type": item.type, "text": item.text})
+                continue
+
+            output.append(
+                {
+                    "type": item.type,
+                    "call_id": item.call_id,
+                    "name": item.name,
+                    "arguments": item.arguments,
+                }
+            )
+
+        return {"output": output}

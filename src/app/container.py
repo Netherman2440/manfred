@@ -17,7 +17,8 @@ from app.db.repositories import (
 from app.domain import AgentConfig, Tool, ToolRegistry
 from app.providers import OpenAIProvider, OpenAIProviderConfig
 from app.runtime import AgentRunner
-from app.services import ChatService
+from app.services.chat_service import ChatService
+from app.services.observability import build_observability_service
 
 
 def build_engine(database_url: str) -> Engine:
@@ -110,6 +111,7 @@ class Container(containers.DeclarativeContainer):
     agent_config = providers.Singleton(build_agent_config, settings=settings)
     provider_config = providers.Singleton(build_provider_config, settings=settings)
     provider = providers.Singleton(build_provider, config=provider_config)
+    observability_service = providers.Singleton(build_observability_service, settings=settings)
     agent_runner = providers.Factory(
         AgentRunner,
         agent_repository=agent_repository,
@@ -117,6 +119,7 @@ class Container(containers.DeclarativeContainer):
         item_repository=item_repository,
         tool_registry=tool_registry,
         provider=provider,
+        observability=observability_service,
         max_turn_count=settings.provided.AGENT_MAX_TURNS,
     )
 
@@ -130,6 +133,7 @@ class Container(containers.DeclarativeContainer):
         agent_config=agent_config,
         tool_registry=tool_registry,
         agent_runner=agent_runner,
+        observability=observability_service,
         default_user_id=settings.provided.DEFAULT_USER_ID,
         default_user_name=settings.provided.DEFAULT_USER_NAME,
     )
