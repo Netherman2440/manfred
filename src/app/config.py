@@ -16,11 +16,17 @@ class Settings(BaseSettings):
     API_PORT: int = 3000
     API_RELOAD: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
+    AGENT_MAX_TURNS: int = 10
+    LLM_TIMEOUT_SECONDS: int = 120
+    LLM_PROVIDER: str = "openrouter"
 
 #agent config
     SYSTEM_PROMPT_PATH: str = "app/prompts/system_prompt.md"
 # optional temperature etc
 
+    OPENAI_URL: str = "https://api.openai.com/v1"
+    OPENAI_API_KEY: str = ""
+    OPENAI_LLM_MODEL: str = "gpt-4o-mini"
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""
     OPEN_ROUTER_LLM_MODEL: str = "openai/gpt-4o-mini"

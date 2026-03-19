@@ -20,7 +20,7 @@ class WebSearchToolDefinition:
 
 ToolDefinition: TypeAlias = FunctionToolDefinition | WebSearchToolDefinition
 ToolType: TypeAlias = Literal["sync", "async", "agent", "human"]
-ToolResult: TypeAlias = dict[str, bool | str]
+ToolResult: TypeAlias = dict[str, Any]
 ToolHandler: TypeAlias = Callable[[dict[str, Any], Any | None], Awaitable[ToolResult]]
 
 

@@ -15,6 +15,8 @@ from app.db.repositories import (
     UserRepository,
 )
 from app.domain import AgentConfig, Tool, ToolRegistry
+from app.providers import OpenAIProvider, OpenAIProviderConfig
+from app.runtime import AgentRunner
 from app.services import ChatService
 
 
@@ -46,11 +48,44 @@ def build_tool_registry() -> ToolRegistry:
 
 
 def build_agent_config(settings: Settings) -> AgentConfig:
+    if settings.LLM_PROVIDER == "openai":
+        model = settings.OPENAI_LLM_MODEL
+    elif settings.LLM_PROVIDER == "openrouter":
+        model = settings.OPEN_ROUTER_LLM_MODEL
+    else:
+        raise ValueError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+
     return AgentConfig(
-        model=settings.OPEN_ROUTER_LLM_MODEL,
+        model=model,
         task=load_system_prompt(settings.SYSTEM_PROMPT_PATH),
         tool_names=tuple(tool.definition.name for tool in get_tools()),
     )
+
+
+def build_provider_config(settings: Settings) -> OpenAIProviderConfig:
+    if settings.LLM_PROVIDER == "openai":
+        return OpenAIProviderConfig(
+            base_url=settings.OPENAI_URL,
+            api_key=settings.OPENAI_API_KEY,
+            timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
+            provider_name="openai",
+            app_name=settings.PROJECT_NAME,
+        )
+
+    if settings.LLM_PROVIDER == "openrouter":
+        return OpenAIProviderConfig(
+            base_url=settings.OPEN_ROUTER_URL,
+            api_key=settings.OPEN_ROUTER_API_KEY,
+            timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
+            provider_name="openrouter",
+            app_name=settings.PROJECT_NAME,
+        )
+
+    raise ValueError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+
+
+def build_provider(config: OpenAIProviderConfig) -> OpenAIProvider:
+    return OpenAIProvider(config)
 
 
 class Container(containers.DeclarativeContainer):
@@ -73,6 +108,17 @@ class Container(containers.DeclarativeContainer):
 
     tool_registry = providers.Singleton(build_tool_registry)
     agent_config = providers.Singleton(build_agent_config, settings=settings)
+    provider_config = providers.Singleton(build_provider_config, settings=settings)
+    provider = providers.Singleton(build_provider, config=provider_config)
+    agent_runner = providers.Factory(
+        AgentRunner,
+        agent_repository=agent_repository,
+        session_repository=session_repository,
+        item_repository=item_repository,
+        tool_registry=tool_registry,
+        provider=provider,
+        max_turn_count=settings.provided.AGENT_MAX_TURNS,
+    )
 
 
     chat_service = providers.Factory(
@@ -83,6 +129,7 @@ class Container(containers.DeclarativeContainer):
         item_repository=item_repository,
         agent_config=agent_config,
         tool_registry=tool_registry,
+        agent_runner=agent_runner,
         default_user_id=settings.provided.DEFAULT_USER_ID,
         default_user_name=settings.provided.DEFAULT_USER_NAME,
     )

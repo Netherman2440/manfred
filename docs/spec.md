@@ -4,22 +4,92 @@
 
 Statusy używane w planie: `todo`, `in progress`, `done`.
 
-1. `done` Ustalić i zaimplementować warstwę domenową dla aktualnego zakresu:
-   `ChatRequest`, `User`, `Session`, `Agent`, `Item`, `PreparedChat`.
-2. `done` Zbudować warstwę persistence:
-   modele SQLAlchemy, przy czym każdy model ma trafić do osobnego pliku w `src/app/db/models/`.
-3. `done` Przygotować inicjalną migrację bazy danych:
-   pierwsza migracja ma utworzyć tabele potrzebne dla `User`, `Session`, `Agent` i `Item`.
-4. `done` Dodać warstwę repozytoriów w `src/app/db/repositories/`:
-   po jednym repozytorium na model, wyłącznie z czystym CRUD-em, bez składania logiki biznesowej między modelami.
-5. `done` Dodać serwisy aplikacyjne w `src/app/services/`:
-   na obecnym etapie rolę przygotowania czatu pełni `chat_service`; serwis jest rejestrowany w kontenerze DI i wstrzykiwany do API przez `Depends`.
-6. `done` Zaimplementować `POST /api/chat/completions` w ograniczonym zakresie:
-   request ma przyjmować tylko `message` oraz opcjonalne `sessionId`; gdy `sessionId` nie zostanie podane, endpoint tworzy nową sesję.
-7. `done` Przygotować składanie kontekstu wejściowego agenta w `chat_service.py` bez uruchamiania pętli wykonania:
-   utworzyć `PreparedChat`, ładować `agent config` z kontenera, wyznaczać `tools` na podstawie konfiguracji agenta, budować `agent input` tak, aby system prompt nie trafiał do sesji, trzymać `task` w konfiguracji agenta i na razie ładować samą sesję bez itemów.
-8. `todo` Kolejny krok:
-   zaimplementować pętlę wykonywania agenta; rozpisanie tej pętli i jej implementacja są celowo odłożone do następnego etapu prac.
+### Założenia bieżącego etapu
+
+1. `done` Pracujemy w trybie `single-agent chat`:
+   jedna sesja ma dokładnie jednego root agenta, a chat nie tworzy child agentów.
+2. `done` `POST /api/chat/completions` przyjmuje na razie tylko `message` i opcjonalne `sessionId`.
+3. `done` Na tym etapie wspieramy tylko `sync tools`.
+4. `done` Na tym etapie nie implementujemy jeszcze:
+   auth, eventów, deliver/resume, multi-agent, human tools, agent tools, async tools, MCP, streamingu, kontroli statusów agenta.
+
+### Zaimplementowane wcześniej
+
+5. `done` Ustalić i zaimplementować podstawową domenę, persistence, init migrację, repozytoria CRUD i DI.
+6. `done` Dodać podstawowy endpoint `POST /api/chat/completions`.
+7. `done` Dodać domenę tooli oraz registry tooli z definicjami ładowanymi z `src/app/agent/tools/`.
+
+### Aktualny plan implementacji
+
+8. `done` Uporządkować `prepare chat` jako jawny etap przygotowania tury:
+   - `user`:
+     pobrać lokalnego użytkownika;
+     `TODO`: docelowo dodać warstwę autoryzacji i mapowanie użytkownika z tokenu.
+   - `session`:
+     jeśli przesłano `sessionId`, próbujemy załadować sesję, a jeśli nie istnieje to tworzymy nową;
+     jeśli `sessionId` nie przesłano, tworzymy nową sesję.
+   - `tools`:
+     pobrać narzędzia z `agent config`.
+   - `agent`:
+     jeśli sesja ma `rootAgentId`, pobrać tego agenta; w przeciwnym razie utworzyć nowego root agenta i przypisać go do sesji.
+   - `item`:
+     utworzyć item z wiadomości użytkownika.
+   - `traceId`:
+     utworzyć nowe `traceId` dla tego requestu.
+   - `responseStartSequence`:
+     obliczyć punkt graniczny odpowiedzi tak, aby do finalnego response trafiały tylko nowe wiadomości LLM-a z bieżącej tury, a nie cała historia rozmowy.
+   - `ChatTurn`:
+     zwrócić strukturę zawierającą co najmniej `user`, `session`, `agent`, `tools`, `user item`, `traceId` i `responseStartSequence`.
+
+9. `done` Dodać domenę providera:
+   - minimalny kontrakt `Provider`,
+   - minimalny `ProviderInput`,
+   - minimalny `ProviderResponse`,
+   - na tym etapie tylko `generate(...)`, bez streamingu i bez `signal`.
+
+10. `done` Dodać `runner.py` z wejściem `runAgent(agentId)`:
+   - załadować `agent` po `agentId`,
+   - załadować `session` po `agent.sessionId`,
+   - `TODO`: zostawić punkt rozszerzenia pod przyszły `execution context`,
+   - `TODO`: zostawić punkt rozszerzenia pod startowanie agenta i kontrolę statusów,
+   - pominąć na razie eventy.
+
+11. `done` Dodać `executeTurn(agent, session)`:
+   - załadować wszystkie `items` przypisane do agenta,
+   - potraktować je jako pełną historię rozmowy,
+   - `TODO`: zostawić hook pod pruning / summarization,
+   - zbudować `provider.generate(...)` bez `signal`,
+   - przekazać sterowanie do `handleTurnResponse(...)`.
+
+12. `done` Dodać `handleTurnResponse(response)`:
+   - zapisać item z odpowiedzią asystenta,
+   - jeśli pojawiły się `tool calls`, wykonać tylko `sync tools`,
+   - zapisać `function_call_output`,
+   - zwrócić informację, czy pętla ma iść dalej.
+
+13. `done` Dodać prostą pętlę `while` bez oparcia o status agenta:
+   - jeśli wynik tury mówi `continue == true`, wykonać następną turę,
+   - jeśli wynik tury mówi `continue == false`, zakończyć pętlę,
+   - dodać `max turn count` sterowany z `config.py`.
+
+14. `done` Zwracać `ChatResponse` z przefiltrowanym outputem:
+   - odpowiedź API ma zawierać tylko nowe itemy od `responseStartSequence`,
+   - nie zwracamy całej historii rozmowy przy każdym requestcie.
+
+### Rzeczy z `01_05_agent`, które są potrzebne do pełnego systemu wieloagentowego, ale nie wchodzą do aktualnego planu
+
+15. `todo` Wieloagentowość:
+   child agenci, delegacja, parent/child relations, auto-propagacja wyników.
+16. `todo` Stany agenta:
+   `pending`, `running`, `waiting`, `completed`, `failed`, `cancelled`.
+17. `todo` `deliver` / `resume` i `waitingFor`.
+18. `todo` Tool types inne niż `sync`:
+   `agent`, `human`, `async`, MCP.
+19. `todo` Eventy, tracing, obserwowalność i korelacja po `traceId`.
+20. `todo` Pruning, summarization i kontrola limitów kontekstu.
+21. `todo` Streaming.
+22. `todo` Auth, rate limiting i pozostałe middleware produkcyjne.
+23. `todo` Wielu providerów i pełne rozwiązywanie modelu po `provider:model`.
 
 ## Cel dokumentu
 
