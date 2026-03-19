@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     OPEN_ROUTER_API_KEY: str = ""
     OPEN_ROUTER_LLM_MODEL: str = "openai/gpt-4o-mini"
     OPEN_ROUTER_SLM_MODEL: str = "openai/gpt-4o-mini"
+    ELEVENLABS_URL: str = "https://api.elevenlabs.io"
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_TRANSCRIPTION_MODEL: str = "scribe_v2"
+    ELEVENLABS_TEXT_TO_SPEECH_MODEL: str = "eleven_multilingual_v2"
+    ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_OUTPUT_FORMAT: str = "mp3_44100_128"
+    ELEVENLABS_TIMEOUT_SECONDS: int = 120
     DEFAULT_USER_ID: str = "default-user"
     DEFAULT_USER_NAME: str = "Default User"
 

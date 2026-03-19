@@ -6,8 +6,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import Settings
-from app.agent.tools import calculator_tool, filesystem_tools
+from app.config import BASE_DIR, Settings
+from app.agent.tools import build_audio_tools, calculator_tool, filesystem_tools
 from app.db.repositories import (
     AgentRepository,
     ItemRepository,
@@ -17,6 +17,7 @@ from app.db.repositories import (
 from app.domain import AgentConfig, Tool, ToolRegistry
 from app.providers import OpenAIProvider, OpenAIProviderConfig
 from app.runtime import AgentRunner
+from app.services import AudioService, ElevenLabsAudioService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
 
@@ -37,18 +38,38 @@ def load_system_prompt(path: str) -> str:
     return prompt_path.read_text(encoding="utf-8").strip()
 
 
-def get_tools() -> list[Tool]:
-    return [calculator_tool, *filesystem_tools]
+def resolve_workspace_root(raw_path: str) -> Path:
+    workspace_root = Path(raw_path).expanduser()
+    if not workspace_root.is_absolute():
+        workspace_root = BASE_DIR / workspace_root
+    return workspace_root.resolve(strict=False)
 
 
-def build_tool_registry() -> ToolRegistry:
+def build_audio_service(settings: Settings) -> AudioService:
+    return ElevenLabsAudioService(
+        base_url=settings.ELEVENLABS_URL,
+        api_key=settings.ELEVENLABS_API_KEY,
+        workspace_root=resolve_workspace_root(settings.WORKSPACE_ROOT),
+        transcription_model=settings.ELEVENLABS_TRANSCRIPTION_MODEL,
+        text_to_speech_model=settings.ELEVENLABS_TEXT_TO_SPEECH_MODEL,
+        voice_id=settings.ELEVENLABS_VOICE_ID,
+        output_format=settings.ELEVENLABS_OUTPUT_FORMAT,
+        timeout_seconds=settings.ELEVENLABS_TIMEOUT_SECONDS,
+    )
+
+
+def get_tools(audio_service: AudioService) -> list[Tool]:
+    return [calculator_tool, *filesystem_tools, *build_audio_tools(audio_service)]
+
+
+def build_tool_registry(audio_service: AudioService) -> ToolRegistry:
     registry = ToolRegistry()
-    for tool in get_tools():
+    for tool in get_tools(audio_service):
         registry.register(tool)
     return registry
 
 
-def build_agent_config(settings: Settings) -> AgentConfig:
+def build_agent_config(settings: Settings, audio_service: AudioService) -> AgentConfig:
     if settings.LLM_PROVIDER == "openai":
         model = settings.OPENAI_LLM_MODEL
     elif settings.LLM_PROVIDER == "openrouter":
@@ -59,7 +80,7 @@ def build_agent_config(settings: Settings) -> AgentConfig:
     return AgentConfig(
         model=model,
         task=load_system_prompt(settings.SYSTEM_PROMPT_PATH),
-        tool_names=tuple(tool.definition.name for tool in get_tools()),
+        tool_names=tuple(tool.definition.name for tool in get_tools(audio_service)),
     )
 
 
@@ -107,8 +128,9 @@ class Container(containers.DeclarativeContainer):
     agent_repository = providers.Factory(AgentRepository, session_factory=session_factory)
     item_repository = providers.Factory(ItemRepository, session_factory=session_factory)
 
-    tool_registry = providers.Singleton(build_tool_registry)
-    agent_config = providers.Singleton(build_agent_config, settings=settings)
+    audio_service = providers.Singleton(build_audio_service, settings=settings)
+    tool_registry = providers.Singleton(build_tool_registry, audio_service=audio_service)
+    agent_config = providers.Singleton(build_agent_config, settings=settings, audio_service=audio_service)
     provider_config = providers.Singleton(build_provider_config, settings=settings)
     provider = providers.Singleton(build_provider, config=provider_config)
     observability_service = providers.Singleton(build_observability_service, settings=settings)
