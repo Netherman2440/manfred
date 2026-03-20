@@ -210,7 +210,11 @@ class AgentRunner:
                         "error": f"Unsupported tool type: {tool.type}",
                     }
                 else:
-                    tool_result = await self._tool_registry.execute(function_call.name, function_call.arguments)
+                    tool_result = await self._tool_registry.execute(
+                        function_call.name,
+                        function_call.arguments,
+                        call_id=function_call.call_id,
+                    )
 
                 self._observability.update_current_span(
                     output=tool_result,

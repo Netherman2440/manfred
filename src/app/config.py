@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 3000
     API_RELOAD: bool = True
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "%(asctime)s %(levelname)s %(name)s %(message)s"
+    TOOL_LOG_MAX_LENGTH: int = 4000
     DATABASE_URL: str = "sqlite:///./manfred.db"
     AGENT_MAX_TURNS: int = 10
     LLM_TIMEOUT_SECONDS: int = 120

@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import BASE_DIR, Settings
-from app.agent.tools import build_audio_tools, build_image_tools, calculator_tool, filesystem_tools
+from app.agent.tools import build_ai_devs_tools, build_audio_tools, build_image_tools, calculator_tool, filesystem_tools
 from app.db.repositories import (
     AgentRepository,
     ItemRepository,
@@ -70,13 +70,19 @@ def build_image_service(settings: Settings) -> ImageService:
     )
 
 
-def get_tools(audio_service: AudioService, image_service: ImageService) -> list[Tool]:
-    return [calculator_tool, *filesystem_tools, *build_audio_tools(audio_service), *build_image_tools(image_service)]
+def get_tools(settings: Settings, audio_service: AudioService, image_service: ImageService) -> list[Tool]:
+    return [
+        calculator_tool,
+        *filesystem_tools,
+        *build_audio_tools(audio_service),
+        *build_image_tools(image_service),
+        *build_ai_devs_tools(settings),
+    ]
 
 
-def build_tool_registry(audio_service: AudioService, image_service: ImageService) -> ToolRegistry:
-    registry = ToolRegistry()
-    for tool in get_tools(audio_service, image_service):
+def build_tool_registry(settings: Settings, audio_service: AudioService, image_service: ImageService) -> ToolRegistry:
+    registry = ToolRegistry(max_log_value_length=settings.TOOL_LOG_MAX_LENGTH)
+    for tool in get_tools(settings, audio_service, image_service):
         registry.register(tool)
     return registry
 
@@ -92,7 +98,7 @@ def build_agent_config(settings: Settings, audio_service: AudioService, image_se
     return AgentConfig(
         model=model,
         task=load_system_prompt(settings.SYSTEM_PROMPT_PATH),
-        tool_names=tuple(tool.definition.name for tool in get_tools(audio_service, image_service)),
+        tool_names=tuple(tool.definition.name for tool in get_tools(settings, audio_service, image_service)),
     )
 
 
@@ -144,6 +150,7 @@ class Container(containers.DeclarativeContainer):
     image_service = providers.Singleton(build_image_service, settings=settings)
     tool_registry = providers.Singleton(
         build_tool_registry,
+        settings=settings,
         audio_service=audio_service,
         image_service=image_service,
     )

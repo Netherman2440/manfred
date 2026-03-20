@@ -4,6 +4,7 @@ from fastapi import FastAPI
 import uvicorn
 from app.api.v1.api import api_router
 from app.container import Container
+from app.logging_config import configure_logging
 
 APP_FACTORY_PATH = "app.main:create_app"
 
@@ -17,6 +18,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = container.settings()
+    configure_logging(settings)
     container.wire()
 
     app = FastAPI(
