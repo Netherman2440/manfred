@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     OPENAI_URL: str = "https://api.openai.com/v1"
     OPENAI_API_KEY: str = ""
     OPENAI_LLM_MODEL: str = "gpt-4o-mini"
+    OPENAI_VISION_MODEL: str = "gpt-4.1-mini"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1.5"
+    OPENAI_IMAGE_SIZE: str = "1024x1024"
+    OPENAI_IMAGE_TIMEOUT_SECONDS: int = 120
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""
     OPEN_ROUTER_LLM_MODEL: str = "openai/gpt-4o-mini"

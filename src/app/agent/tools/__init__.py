@@ -1,5 +1,6 @@
 from app.agent.tools.calculator import calculator_tool
 from app.agent.tools.audio import build_audio_tools
+from app.agent.tools.images import build_image_tools
 from app.agent.tools.files import (
     create_directory_tool,
     delete_file_tool,
@@ -12,6 +13,7 @@ from app.agent.tools.files import (
 
 __all__ = [
     "build_audio_tools",
+    "build_image_tools",
     "calculator_tool",
     "list_files_tool",
     "read_file_tool",

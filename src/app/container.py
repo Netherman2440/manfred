@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import BASE_DIR, Settings
-from app.agent.tools import build_audio_tools, calculator_tool, filesystem_tools
+from app.agent.tools import build_audio_tools, build_image_tools, calculator_tool, filesystem_tools
 from app.db.repositories import (
     AgentRepository,
     ItemRepository,
@@ -17,7 +17,7 @@ from app.db.repositories import (
 from app.domain import AgentConfig, Tool, ToolRegistry
 from app.providers import OpenAIProvider, OpenAIProviderConfig
 from app.runtime import AgentRunner
-from app.services import AudioService, ElevenLabsAudioService
+from app.services import AudioService, ElevenLabsAudioService, ImageService, OpenAIImageService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
 
@@ -58,18 +58,30 @@ def build_audio_service(settings: Settings) -> AudioService:
     )
 
 
-def get_tools(audio_service: AudioService) -> list[Tool]:
-    return [calculator_tool, *filesystem_tools, *build_audio_tools(audio_service)]
+def build_image_service(settings: Settings) -> ImageService:
+    return OpenAIImageService(
+        base_url=settings.OPENAI_URL,
+        api_key=settings.OPENAI_API_KEY,
+        workspace_root=resolve_workspace_root(settings.WORKSPACE_ROOT),
+        vision_model=settings.OPENAI_VISION_MODEL,
+        image_model=settings.OPENAI_IMAGE_MODEL,
+        image_size=settings.OPENAI_IMAGE_SIZE,
+        timeout_seconds=settings.OPENAI_IMAGE_TIMEOUT_SECONDS,
+    )
 
 
-def build_tool_registry(audio_service: AudioService) -> ToolRegistry:
+def get_tools(audio_service: AudioService, image_service: ImageService) -> list[Tool]:
+    return [calculator_tool, *filesystem_tools, *build_audio_tools(audio_service), *build_image_tools(image_service)]
+
+
+def build_tool_registry(audio_service: AudioService, image_service: ImageService) -> ToolRegistry:
     registry = ToolRegistry()
-    for tool in get_tools(audio_service):
+    for tool in get_tools(audio_service, image_service):
         registry.register(tool)
     return registry
 
 
-def build_agent_config(settings: Settings, audio_service: AudioService) -> AgentConfig:
+def build_agent_config(settings: Settings, audio_service: AudioService, image_service: ImageService) -> AgentConfig:
     if settings.LLM_PROVIDER == "openai":
         model = settings.OPENAI_LLM_MODEL
     elif settings.LLM_PROVIDER == "openrouter":
@@ -80,7 +92,7 @@ def build_agent_config(settings: Settings, audio_service: AudioService) -> Agent
     return AgentConfig(
         model=model,
         task=load_system_prompt(settings.SYSTEM_PROMPT_PATH),
-        tool_names=tuple(tool.definition.name for tool in get_tools(audio_service)),
+        tool_names=tuple(tool.definition.name for tool in get_tools(audio_service, image_service)),
     )
 
 
@@ -129,8 +141,18 @@ class Container(containers.DeclarativeContainer):
     item_repository = providers.Factory(ItemRepository, session_factory=session_factory)
 
     audio_service = providers.Singleton(build_audio_service, settings=settings)
-    tool_registry = providers.Singleton(build_tool_registry, audio_service=audio_service)
-    agent_config = providers.Singleton(build_agent_config, settings=settings, audio_service=audio_service)
+    image_service = providers.Singleton(build_image_service, settings=settings)
+    tool_registry = providers.Singleton(
+        build_tool_registry,
+        audio_service=audio_service,
+        image_service=image_service,
+    )
+    agent_config = providers.Singleton(
+        build_agent_config,
+        settings=settings,
+        audio_service=audio_service,
+        image_service=image_service,
+    )
     provider_config = providers.Singleton(build_provider_config, settings=settings)
     provider = providers.Singleton(build_provider, config=provider_config)
     observability_service = providers.Singleton(build_observability_service, settings=settings)
