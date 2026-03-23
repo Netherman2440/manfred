@@ -16,6 +16,7 @@ from app.agent.tools import (
     wait_tool,
 )
 from app.db.repositories import (
+    AttachmentRepository,
     AgentRepository,
     ItemRepository,
     SessionRepository,
@@ -24,7 +25,16 @@ from app.db.repositories import (
 from app.domain import AgentConfig, Tool, ToolRegistry
 from app.providers import OpenAIProvider, OpenAIProviderConfig
 from app.runtime import AgentRunner
-from app.services import AudioService, ElevenLabsAudioService, ImageService, OpenAIImageService
+from app.services import (
+    AttachmentService,
+    AttachmentStorageService,
+    AudioService,
+    ChatInputBuilder,
+    ElevenLabsAudioService,
+    ImageService,
+    OpenAIImageService,
+)
+from app.services.conversation_context import ConversationContextService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
 
@@ -153,9 +163,30 @@ class Container(containers.DeclarativeContainer):
     session_repository = providers.Factory(SessionRepository, session_factory=session_factory)
     agent_repository = providers.Factory(AgentRepository, session_factory=session_factory)
     item_repository = providers.Factory(ItemRepository, session_factory=session_factory)
+    attachment_repository = providers.Factory(AttachmentRepository, session_factory=session_factory)
 
     audio_service = providers.Singleton(build_audio_service, settings=settings)
     image_service = providers.Singleton(build_image_service, settings=settings)
+    attachment_storage_service = providers.Singleton(
+        AttachmentStorageService,
+        workspace_root=providers.Callable(resolve_workspace_root, settings.provided.WORKSPACE_ROOT),
+        max_size_bytes=settings.provided.ATTACHMENT_MAX_SIZE_BYTES,
+    )
+    attachment_service = providers.Factory(
+        AttachmentService,
+        attachment_repository=attachment_repository,
+        storage_service=attachment_storage_service,
+        audio_service=audio_service,
+    )
+    chat_input_builder = providers.Singleton(ChatInputBuilder)
+    conversation_context_service = providers.Factory(
+        ConversationContextService,
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        default_user_id=settings.provided.DEFAULT_USER_ID,
+        default_user_name=settings.provided.DEFAULT_USER_NAME,
+    )
     tool_registry = providers.Singleton(
         build_tool_registry,
         settings=settings,
@@ -185,14 +216,12 @@ class Container(containers.DeclarativeContainer):
 
     chat_service = providers.Factory(
         ChatService,
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
         item_repository=item_repository,
+        attachment_service=attachment_service,
         agent_config=agent_config,
         tool_registry=tool_registry,
         agent_runner=agent_runner,
         observability=observability_service,
-        default_user_id=settings.provided.DEFAULT_USER_ID,
-        default_user_name=settings.provided.DEFAULT_USER_NAME,
+        chat_input_builder=chat_input_builder,
+        conversation_context=conversation_context_service,
     )

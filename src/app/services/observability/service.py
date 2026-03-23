@@ -37,6 +37,7 @@ class LangfuseObservabilityService(ObservabilityService):
         user_id: str,
         agent_id: str,
         message: str,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> Iterator[Any]:
         with self._propagate_attributes(
             user_id=user_id,
@@ -46,17 +47,19 @@ class LangfuseObservabilityService(ObservabilityService):
                 "agent_id": agent_id,
                 "app_name": self._app_name,
                 "environment": self._environment,
+                "attachments": attachments or [],
             },
         ):
             with self._client.start_as_current_observation(
                 name="chat.turn",
                 as_type="span",
                 trace_context={"trace_id": trace_id},
-                input={"message": message},
+                input={"message": message, "attachments": attachments or []},
                 metadata={
                     "agent_id": agent_id,
                     "app_name": self._app_name,
                     "environment": self._environment,
+                    "attachments": attachments or [],
                 },
             ):
                 yield

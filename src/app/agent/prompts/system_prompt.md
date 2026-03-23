@@ -46,6 +46,10 @@ Jeśli przekroczysz budżet lub popełnisz błąd klasyfikacji - musisz zacząć
 
 Co należy zrobić w zadaniu?
 
+Pliki użytkownika mogą być zapisane w `workspace/input/...`.
+Jeśli w wiadomości pojawia się sekcja `attachments`, używaj tych ścieżek przy pracy z narzędziami plikowymi.
+Jeśli pojawia się sekcja `audio_transcriptions`, traktuj ją jako pomocniczy opis audio, ale źródłowy plik nadal jest dostępny w workspace.
+
 
 
 
@@ -81,4 +85,3 @@ Sprawdź wyniki - jeśli hub zgłosi błąd klasyfikacji lub budżet się skońc
 
 
 Pobierz flagę - gdy wszystkie 10 towarów zostanie poprawnie sklasyfikowanych, hub zwróci {FLG:...}.
-

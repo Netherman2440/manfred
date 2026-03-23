@@ -7,6 +7,7 @@ from app.domain.agent import (
     prepare_agent_for_next_turn,
     start_agent,
 )
+from app.domain.attachment import Attachment
 from app.domain.chat import (
     ChatFunctionCallOutput,
     ChatOutputItem,
@@ -29,13 +30,15 @@ from app.domain.provider import (
 )
 from app.domain.session import Session
 from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, ToolRegistry, WebSearchToolDefinition
-from app.domain.types import AgentStatus, ItemType, MessageRole, SessionStatus
+from app.domain.types import AgentStatus, AttachmentKind, ItemType, MessageRole, SessionStatus, TranscriptionStatus
 from app.domain.user import User
 
 __all__ = [
     "Agent",
     "AgentConfig",
     "AgentStatus",
+    "Attachment",
+    "AttachmentKind",
     "ChatFunctionCallOutput",
     "ChatOutputItem",
     "ChatRequest",
@@ -65,6 +68,7 @@ __all__ = [
     "Tool",
     "ToolDefinition",
     "ToolRegistry",
+    "TranscriptionStatus",
     "User",
     "WebSearchToolDefinition",
 ]

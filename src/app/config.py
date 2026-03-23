@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     ELEVENLABS_TIMEOUT_SECONDS: int = 120
     DEFAULT_USER_ID: str = "default-user"
     DEFAULT_USER_NAME: str = "Default User"
+    ATTACHMENT_MAX_SIZE_BYTES: int = 25 * 1024 * 1024
 
     #gemini? TODO
 

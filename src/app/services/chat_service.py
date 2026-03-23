@@ -1,12 +1,10 @@
 import json
 
-from app.db.repositories.agent_repository import AgentRepository
 from app.db.repositories.item_repository import ItemRepository
-from app.db.repositories.session_repository import SessionRepository
-from app.db.repositories.user_repository import UserRepository
 from app.domain import (
     Agent,
     AgentConfig,
+    Attachment,
     ChatFunctionCallOutput,
     ChatOutputItem,
     ChatRequest,
@@ -17,50 +15,62 @@ from app.domain import (
     Item,
     ItemType,
     MessageRole,
-    Session,
     ToolRegistry,
-    User,
-    prepare_agent_for_next_turn,
 )
 from app.runtime import AgentRunner
+from app.services.attachments import AttachmentService, ChatInputBuilder
+from app.services.conversation_context import ConversationContextService
 from app.services.observability import ObservabilityService
+
+
+class ChatValidationError(ValueError):
+    pass
 
 
 class ChatService:
     def __init__(
         self,
         *,
-        user_repository: UserRepository,
-        session_repository: SessionRepository,
-        agent_repository: AgentRepository,
         item_repository: ItemRepository,
+        attachment_service: AttachmentService,
         agent_config: AgentConfig,
         tool_registry: ToolRegistry,
         agent_runner: AgentRunner,
         observability: ObservabilityService,
-        default_user_id: str,
-        default_user_name: str,
+        chat_input_builder: ChatInputBuilder,
+        conversation_context: ConversationContextService,
     ) -> None:
-        self._user_repository = user_repository
-        self._session_repository = session_repository
-        self._agent_repository = agent_repository
         self._item_repository = item_repository
+        self._attachment_service = attachment_service
         self._agent_config = agent_config
         self._tool_registry = tool_registry
         self._agent_runner = agent_runner
         self._observability = observability
-        self._default_user_id = default_user_id
-        self._default_user_name = default_user_name
+        self._chat_input_builder = chat_input_builder
+        self._conversation_context = conversation_context
 
-    def prepare_chat_turn(self, request: ChatRequest) -> ChatTurn:
-        # TODO: Resolve the local user from auth instead of the default bootstrap user.
-        user = self._ensure_default_user()
-        session = self._load_session(request.session_id, user)
+    async def prepare_chat_turn(self, request: ChatRequest) -> ChatTurn:
+        user = self._conversation_context.ensure_default_user()
+        session = self._conversation_context.load_or_create_session(request.session_id, user)
         tools = self._resolve_tools(self._agent_config.tool_names)
-        agent = self._load_or_create_root_agent(session)
+        agent = self._conversation_context.load_or_create_root_agent(session, self._agent_config)
+        attachments = self._attachment_service.get_for_session(
+            session_id=session.id,
+            attachment_ids=request.attachment_ids,
+        )
+        attachments = await self._attachment_service.ensure_transcriptions(attachments)
+        user_input = self._chat_input_builder.build(message=request.message, attachments=attachments)
+        if user_input.strip() == "":
+            raise ChatValidationError("message must not be empty when no attachments are provided.")
+
         trace_id = self._observability.create_trace_id()
         response_start_sequence = self._item_repository.get_last_sequence(agent.id)
-        user_item = self._create_user_message_item(session, agent, request.message, response_start_sequence + 1)
+        user_item = self._create_user_message_item(session.id, agent.id, user_input, response_start_sequence + 1)
+        assigned_attachments = self._attachment_service.assign_to_item(
+            attachments,
+            agent_id=agent.id,
+            item_id=user_item.id,
+        )
 
         return ChatTurn(
             user=user,
@@ -69,17 +79,19 @@ class ChatService:
             user_item=user_item,
             trace_id=trace_id,
             response_start_sequence=response_start_sequence,
+            attachments=assigned_attachments,
             tools=tools,
         )
 
     async def process_chat(self, request: ChatRequest) -> ChatResponse:
-        chat_turn = self.prepare_chat_turn(request)
+        chat_turn = await self.prepare_chat_turn(request)
         with self._observability.start_chat_turn(
             trace_id=chat_turn.trace_id,
             session_id=chat_turn.session.id,
             user_id=chat_turn.user.id,
             agent_id=chat_turn.agent.id,
-            message=request.message,
+            message=chat_turn.user_item.content or "",
+            attachments=self._serialize_attachments(chat_turn.attachments),
         ):
             self._observability.record_item(chat_turn.user_item)
 
@@ -113,59 +125,16 @@ class ChatService:
             self._observability.flush()
             return response
 
-
-    def _ensure_default_user(self) -> User:
-        user = self._user_repository.get_by_id(self._default_user_id)
-        if user is not None:
-            return user
-
-        return self._user_repository.create(
-            name=self._default_user_name,
-            user_id=self._default_user_id,
-        )
-
-    def _load_session(self, session_id: str | None, user: User) -> Session:
-        if session_id:
-            session = self._session_repository.get_by_id(session_id)
-            if session is not None:
-                return session
-
-        return self._session_repository.create(user_id=user.id)
-
-    def _load_or_create_root_agent(self, session: Session) -> Agent:
-        if session.root_agent_id:
-            agent = self._agent_repository.get_by_id(session.root_agent_id)
-            if agent is not None:
-                prepared_agent = prepare_agent_for_next_turn(agent, config=self._agent_config)
-                return self._agent_repository.update(prepared_agent)
-
-        agent = self._agent_repository.create(
-            session_id=session.id,
-            config=self._agent_config,
-        )
-
-        updated_session = Session(
-            id=session.id,
-            user_id=session.user_id,
-            root_agent_id=agent.id,
-            status=session.status,
-            summary=session.summary,
-            created_at=session.created_at,
-            updated_at=session.updated_at,
-        )
-        self._session_repository.update(updated_session)
-        return agent
-
     def _create_user_message_item(
         self,
-        session: Session,
-        agent: Agent,
+        session_id: str,
+        agent_id: str,
         message: str,
         sequence: int,
     ) -> Item:
         return self._item_repository.create(
-            session_id=session.id,
-            agent_id=agent.id,
+            session_id=session_id,
+            agent_id=agent_id,
             sequence=sequence,
             item_type=ItemType.MESSAGE,
             role=MessageRole.USER,
@@ -211,6 +180,7 @@ class ChatService:
             model=agent.config.model,
             status=status,
             output=output,
+            attachments=chat_turn.attachments,
             error=error,
         )
 
@@ -258,4 +228,18 @@ class ChatService:
             "status": response.status,
             "error": response.error,
             "output": response.output,
+            "attachments": ChatService._serialize_attachments(response.attachments),
         }
+
+    @staticmethod
+    def _serialize_attachments(attachments: list[Attachment]) -> list[dict[str, object]]:
+        return [
+            {
+                "id": attachment.id,
+                "kind": attachment.kind.value,
+                "mime_type": attachment.mime_type,
+                "workspace_path": attachment.workspace_path,
+                "transcription_status": attachment.transcription_status.value,
+            }
+            for attachment in attachments
+        ]

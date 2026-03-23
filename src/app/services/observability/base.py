@@ -19,6 +19,7 @@ class ObservabilityService:
         user_id: str,
         agent_id: str,
         message: str,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> Any:
         return nullcontext()
 

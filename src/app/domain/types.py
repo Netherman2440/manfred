@@ -26,3 +26,17 @@ class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+class AttachmentKind(StrEnum):
+    IMAGE = "image"
+    DOCUMENT = "document"
+    AUDIO = "audio"
+    OTHER = "other"
+
+
+class TranscriptionStatus(StrEnum):
+    NOT_APPLICABLE = "not_applicable"
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
