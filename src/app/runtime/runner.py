@@ -230,7 +230,7 @@ class AgentRunner:
                 item_type=ItemType.FUNCTION_CALL_OUTPUT,
                 call_id=function_call.call_id,
                 name=function_call.name,
-                output=self._serialize_tool_result_output(tool_result),
+                output=self._serialize_tool_result_output(function_call.name, tool_result),
                 is_error=not bool(tool_result.get("ok")),
             )
             self._observability.record_item(item)
@@ -295,10 +295,19 @@ class AgentRunner:
         return {}
 
     @staticmethod
-    def _serialize_tool_result_output(tool_result: dict[str, Any]) -> str:
+    def _serialize_tool_result_output(tool_name: str, tool_result: dict[str, Any]) -> str:
         if tool_result.get("ok"):
             output = tool_result.get("output")
             return AgentRunner._serialize_tool_output(output)
+
+        if tool_name == "verify_task" and "output" in tool_result:
+            return AgentRunner._serialize_tool_output(
+                {
+                    "ok": False,
+                    "error": tool_result.get("error"),
+                    "output": tool_result.get("output"),
+                }
+            )
 
         error = tool_result.get("error")
         return str(error) if error is not None else "Tool execution failed."

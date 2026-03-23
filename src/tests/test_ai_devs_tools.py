@@ -1,9 +1,11 @@
 from importlib.util import module_from_spec, spec_from_file_location
+import io
 import json
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
+from urllib import error
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
 if str(SRC_ROOT) not in sys.path:
@@ -37,6 +39,9 @@ class FakeHeaders:
         if key.lower() == "content-type":
             return self._content_type
         return default
+
+    def items(self):
+        return [("Content-Type", self._content_type)]
 
 
 class FakeResponse:
@@ -115,6 +120,37 @@ class AIDevsToolsTest(unittest.IsolatedAsyncioTestCase):
                     ],
                 }
             )
+
+    async def test_verify_task_returns_error_payload_on_http_error(self) -> None:
+        tool = verify_task_module.build_verify_task_tool(
+            Settings(AI_DEVS_API_KEY="test-key", AI_DEVS_HUB_URL="https://hub.ag3nts.org"),
+        )
+
+        response_body = b'{"code":-985,"message":"API rate limit exceeded. Please retry later.","retry_after":29}'
+        response_headers = {"Content-Type": "application/json; charset=utf-8"}
+
+        def fake_urlopen(req, timeout):
+            del req, timeout
+            raise error.HTTPError(
+                url="https://hub.ag3nts.org/verify",
+                code=429,
+                msg="Too Many Requests",
+                hdrs=response_headers,
+                fp=io.BytesIO(response_body),
+            )
+
+        with patch.object(verify_task_module.request, "urlopen", side_effect=fake_urlopen):
+            result = await tool.handler(
+                {
+                    "task": "railway",
+                    "answer": {"action": "reconfigure", "route": "X-01"},
+                }
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "AI Devs verify endpoint returned HTTP 429.")
+        self.assertEqual(result["output"]["status_code"], 429)
+        self.assertEqual(result["output"]["response"]["retry_after"], 29)
 
 
 if __name__ == "__main__":

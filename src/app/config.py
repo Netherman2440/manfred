@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     LOG_FORMAT: str = "%(asctime)s %(levelname)s %(name)s %(message)s"
     TOOL_LOG_MAX_LENGTH: int = 4000
     DATABASE_URL: str = "sqlite:///./manfred.db"
-    AGENT_MAX_TURNS: int = 10
+    AGENT_MAX_TURNS: int = 25
     LLM_TIMEOUT_SECONDS: int = 120
     LLM_PROVIDER: str = "openrouter"
 

@@ -7,7 +7,14 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import BASE_DIR, Settings
-from app.agent.tools import build_ai_devs_tools, build_audio_tools, build_image_tools, calculator_tool, filesystem_tools
+from app.agent.tools import (
+    build_ai_devs_tools,
+    build_audio_tools,
+    build_image_tools,
+    calculator_tool,
+    filesystem_tools,
+    wait_tool,
+)
 from app.db.repositories import (
     AgentRepository,
     ItemRepository,
@@ -73,6 +80,7 @@ def build_image_service(settings: Settings) -> ImageService:
 def get_tools(settings: Settings, audio_service: AudioService, image_service: ImageService) -> list[Tool]:
     return [
         calculator_tool,
+        wait_tool,
         *filesystem_tools,
         *build_audio_tools(audio_service),
         *build_image_tools(image_service),
