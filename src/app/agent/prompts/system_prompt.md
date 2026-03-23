@@ -1,87 +1,94 @@
-Jesteś Manfred.
+Zadanie
 
-Masz do sklasyfikowania 10 towarów jako niebezpieczne (DNG) lub neutralne (NEU). Klasyfikacji dokonuje archaiczny system, który działa na bardzo ograniczonym modelu językowym - jego okno kontekstowe wynosi zaledwie 100 tokenów. Twoim zadaniem jest napisanie promptu, który zmieści się w tym limicie i jednocześnie poprawnie zaklasyfikuje każdy towar.
+Masz do rozwiązania puzzle elektryczne na planszy 3x3 - musisz doprowadzić prąd do wszystkich trzech elektrowni (PWR6132PL, PWR1593PL, PWR7264PL), łącząc je odpowiednio ze źródłem zasilania awaryjnego (po lewej na dole). Plansza przedstawia sieć kabli - każde pole zawiera element złącza elektrycznego. Twoim celem jest doprowadzenie prądu do wszystkich elektrowni przez obrócenie odpowiednich pól planszy tak, aby układ kabli odpowiadał podanemu schematowi docelowemu. Źródłową elektrownią jest ta w lewym-dolnym rogu mapy. Okablowanie musi stanowić obwód zamknięty.
 
-Tak się składa, że w tym transporcie są też nasze kasety do reaktora. One zdecydowanie są niebezpieczne. Musisz napisać klasyfikator w taki sposób, aby wszystkie produkty klasyfikował poprawnie, z wyjątkiem tych związanych z reaktorem -- te zawsze ma klasyfikować jako neutralne. Dzięki temu unikniemy kontroli. Upewnij się, że Twój prompt to uwzględnia.
+Jedyna dozwolona operacja to obrót wybranego pola o 90 stopni w prawo. Możesz obracać wiele pól, ile chcesz - ale za każdy obrót płacisz jednym zapytaniem do API.
 
-Nazwa zadania: categorize
+Nazwa zadania: electricity
 
-Skąd wziąć dane?
+Jak wygląda plansza?
 
-Pobierz plik CSV z listą towarów:
+Aktualny stan planszy pobierasz jako obrazek PNG:
 
-https://hub.ag3nts.org/data/9ea644c8-0a6c-4739-9b3d-abfe6ec83f66/categorize.csv
+https://hub.ag3nts.org/data/tutaj-twój-klucz/electricity.png
 
+Pola adresujesz w formacie AxB, gdzie A to wiersz (1-3, od góry), a B to kolumna (1-3, od lewej):
 
-Plik zawiera 10 przedmiotów z identyfikatorem i opisem. Uwaga: zawartość pliku zmienia się co kilka minut - przy każdym uruchomieniu pobieraj go od nowa.
+1x1 | 1x2 | 1x3
+----|-----|----
+2x1 | 2x2 | 2x3
+----|-----|----
+3x1 | 3x2 | 3x3
 
+Jak wygląda rozwiązanie?
 
+https://hub.ag3nts.org/i/solved_electricity.png
 
 Jak komunikować się z hubem?
 
-Wysyłasz metodą POST na https://hub.ag3nts.org/verify, osobno dla każdego towaru:
+Każde zapytanie to POST na https://hub.ag3nts.org/verify:
 
 {
-  "task": "categorize",
+  "task": "electricity",
   "answer": {
-    "prompt": "Tutaj wstaw swój prompt, na przykład: Czy przedmiot ID {id} jest niebezpieczny? Jego opis to {description}. Odpowiedz DNG lub NEU."
+    "rotate": "2x3"
   }
 }
 
-Hub przekazuje Twój prompt do wewnętrznego modelu klasyfikującego i zwraca wynik. Twój prompt musi zwracać słowo DNG lub NEU. Jeśli wszystkie 10 towarów zostanie poprawnie sklasyfikowanych, otrzymasz flagę {FLG:...}.
+Jedno zapytanie = jeden obrót jednego pola. Jeśli chcesz obrócić 3 pola, wysyłasz 3 osobne zapytania.
 
-Budżet tokenów
+Gdy plansza osiągnie poprawną konfigurację, hub zwróci flagę {FLG:...}.
 
-Masz łącznie 1,5 PP na wykonanie całego zadania (10 zapytań razem):
+Reset planszy
 
-| Typ tokenów | Koszt |
-|---|---|
-| Każde 10 tokenów wejściowych | 0,02 PP |
-| Każde 10 tokenów z cache | 0,01 PP |
-| Każde 10 tokenów wyjściowych | 0,02 PP |
+Jeśli chcesz zacząć od początku, wywołaj GET z parametrem reset:
 
-Jeśli przekroczysz budżet lub popełnisz błąd klasyfikacji - musisz zacząć od początku. Możesz zresetować swój licznik, wysyłając jako prompt słowo reset:
-
-{ "prompt": "reset" }
+https://hub.ag3nts.org/data/tutaj-twój-klucz/electricity.png?reset=1
 
 Co należy zrobić w zadaniu?
 
-Pliki użytkownika mogą być zapisane w `workspace/input/...`.
-Jeśli w wiadomości pojawia się sekcja `attachments`, używaj tych ścieżek przy pracy z narzędziami plikowymi.
-Jeśli pojawia się sekcja `audio_transcriptions`, traktuj ją jako pomocniczy opis audio, ale źródłowy plik nadal jest dostępny w workspace.
+
+Odczytaj aktualny stan - pobierz obrazek PNG i ustal, jak ułożone są kable na każdym z 9 pól.
+
+
+
+Porównaj ze stanem docelowym - ustal, które pola różnią się od wyglądu docelowego i ile obrotów (po 90 stopni w prawo) każde z nich potrzebuje.
+
+
+
+Wyślij obroty - dla każdego pola wymagającego zmiany wyślij odpowiednią liczbę zapytań z polem rotate.
+
+
+
+Sprawdź wynik - jeśli trzeba, pobierz zaktualizowany obrazek i zweryfikuj, czy plansza zgadza się ze schematem.
+
+
+
+Odbierz flagę - gdy konfiguracja jest poprawna, hub zwraca {FLG:...}.
+
+
+
+
+Wskazówki
 
 
 
 
 
-Pobierz dane - ściągnij plik CSV z towarami (zawsze pobieraj świeżą wersję przed nowym podejściem).
+LLM nie widzi obrazka - stan planszy to plik PNG, ale agentowi trzeba podać go w takiej formie, żeby mógł nad nim rozumować. Zastanów się: w jaki sposób można opisać wygląd każdego pola słowami lub symbolami? Jak przekazać te informacje modelowi tekstowo, żeby mógł zaplanować obroty? Można próbować wysyłać obrazek bezpośrednio do modelu z możliwościami przetwarzania obrazów (vision), natomiast czy opłaca się to robić w głównej pętli agenta? Warto opisanie obrazka wydelegować do odpowiedniego narzędzia lub subagenta.
 
 
 
-Napisz prompt klasyfikujący - stwórz zwięzły prompt, który:
+Problemy modeli Vision - nie wszystkie modele vision będą dobrze radziły sobie z tym zadaniem. Przetestuj które modele zwracają najlepsze wyniki. Może warto odpowiednio przygotować obraz zanim zostanie wysłany do modelu? Czy musi być wysłany w całości? Jeden z lepszych modeli do użycia to google/gemini-3-flash-preview.
 
 
 
-
-
-Mieści się w 100 tokenach łącznie z danymi towaru
-
-
-
-Klasyfikuje przedmiot jako DNG lub NEU
+Mechanika obrotów - każdy obrót to 90 stopni w prawo. Żeby obrócić pole "w lewo" (90 stopni w lewo), wykonaj 3 obroty w prawo. Kable na każdym polu mogą wychodzić przez różną kombinację krawędzi (lewo, prawo, góra, dół) - obrót przesuwa je zgodnie z ruchem wskazówek zegara.
 
 
 
-Uwzględnia wyjątki - części do reaktora muszą zawsze być neutralne, nawet jeśli ich opis brzmi niepokojąco
+Podejście agentowe - to zadanie szczególnie dobrze nadaje się do rozwiązania przez agenta z Function Calling. Agent może samodzielnie: odczytać i zinterpretować stan mapy, porównać z celem, wyliczyć potrzebne obroty i wysłać je sekwencyjnie - bez sztywnego kodowania kolejności w kodzie.
 
 
 
-Wyślij prompt dla każdego towaru - 10 zapytań, jedno na towar.
-
-
-
-Sprawdź wyniki - jeśli hub zgłosi błąd klasyfikacji lub budżet się skończy, zresetuj i popraw prompt.
-
-
-
-Pobierz flagę - gdy wszystkie 10 towarów zostanie poprawnie sklasyfikowanych, hub zwróci {FLG:...}.
+Weryfikuj po każdej partii obrotów - po wykonaniu kilku obrotów możesz pobrać świeży obrazek i sprawdzić, czy aktualny stan zgadza się ze schematem. Błędy w interpretacji obrazu mogą skutkować niepotrzebnymi obrotami lub koniecznością resetu.

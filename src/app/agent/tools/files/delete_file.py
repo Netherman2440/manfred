@@ -2,28 +2,46 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agent.tools.files.common import WORKSPACE_ROOT, build_filesystem_tool, display_path, ensure_string_argument, resolve_tool_path
+from app.agent.tools.files.common import (
+    WORKSPACE_ROOT,
+    build_filesystem_tool,
+    display_path,
+    expected_file_error,
+    file_not_found_error,
+    validate_string_argument,
+    validate_workspace_path,
+)
+from app.domain.tool import tool_ok
 
 
 async def delete_file_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
     del signal
-    path = ensure_string_argument(args, "path")
-    full_path = resolve_tool_path(path)
+    path = validate_string_argument(
+        args,
+        "path",
+        tool_name="delete_file",
+        hint="Podaj pole 'path' jako ścieżkę do istniejącego pliku w workspace.",
+    )
+    if isinstance(path, dict):
+        return path
+
+    full_path = validate_workspace_path(path, tool_name="delete_file")
+    if isinstance(full_path, dict):
+        return full_path
 
     if not full_path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+        return file_not_found_error("delete_file", path)
     if not full_path.is_file():
-        raise IsADirectoryError(f"Not a file: {path}")
+        return expected_file_error("delete_file", path)
 
     full_path.unlink()
 
-    return {
-        "ok": True,
-        "output": {
+    return tool_ok(
+        {
             "path": display_path(full_path),
             "message": f"File deleted: {display_path(full_path)}",
-        },
-    }
+        }
+    )
 
 
 delete_file_tool = build_filesystem_tool(

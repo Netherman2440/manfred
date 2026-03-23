@@ -49,6 +49,14 @@ class AudioToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"ok": True, "output": {"path": "output/hello_world.mp3"}})
 
+    async def test_generate_audio_tool_returns_soft_error_for_empty_text(self) -> None:
+        tool = build_generate_audio_tool(StubAudioService())
+
+        result = await tool.handler({"text": "  "})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["expected"]["text"], "non-empty string")
+
 
 if __name__ == "__main__":
     unittest.main()

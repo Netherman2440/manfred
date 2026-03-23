@@ -24,9 +24,21 @@ download_file_module = load_module(
     "files_download_tool",
     "app/agent/tools/files/download_file.py",
 )
+list_files_module = load_module(
+    "files_list_tool",
+    "app/agent/tools/files/list_files.py",
+)
+read_file_module = load_module(
+    "files_read_tool",
+    "app/agent/tools/files/read_file.py",
+)
 search_files_module = load_module(
     "files_search_tool",
     "app/agent/tools/files/search_files.py",
+)
+write_file_module = load_module(
+    "files_write_tool",
+    "app/agent/tools/files/write_file.py",
 )
 
 
@@ -118,6 +130,48 @@ class FileToolsTest(unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(result["output"]["query"], query)
+
+    async def test_read_file_returns_soft_error_for_missing_file(self) -> None:
+        result = await read_file_module.read_file_tool.handler({"path": "missing/note.txt"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["path"], "missing/note.txt")
+        self.assertEqual(result["details"]["expected"], "existing file")
+
+    async def test_list_files_returns_soft_error_for_file_path(self) -> None:
+        test_file = list_files_module.WORKSPACE_ROOT / "list-files-single.txt"
+        test_file.write_text("hello", encoding="utf-8")
+
+        try:
+            result = await list_files_module.list_files_tool.handler({"path": "list-files-single.txt"})
+        finally:
+            if test_file.exists():
+                test_file.unlink()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["path"], "list-files-single.txt")
+        self.assertEqual(result["details"]["expected"], "directory")
+
+    async def test_write_file_returns_soft_error_for_directory_target(self) -> None:
+        test_dir = write_file_module.WORKSPACE_ROOT / "write-file-dir"
+        test_dir.mkdir(exist_ok=True)
+
+        try:
+            result = await write_file_module.write_file_tool.handler({"path": "write-file-dir", "content": "hello"})
+        finally:
+            if test_dir.exists():
+                test_dir.rmdir()
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["path"], "write-file-dir")
+        self.assertEqual(result["details"]["expected"], "file path")
+
+    async def test_read_file_blocks_path_traversal_with_structured_error(self) -> None:
+        result = await read_file_module.read_file_tool.handler({"path": "../outside.txt"})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["path"], "../outside.txt")
+        self.assertIn("workspace", result["hint"].lower())
 
 
 if __name__ == "__main__":

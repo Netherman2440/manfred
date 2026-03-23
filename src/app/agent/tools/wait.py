@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, tool_error, tool_ok
 
 
 WAIT_DEFINITION = FunctionToolDefinition(
@@ -35,19 +35,37 @@ async def wait_handler(args: dict[str, Any], signal: object | None = None) -> di
 
     wait_time = args.get("time")
     if isinstance(wait_time, bool) or not isinstance(wait_time, int | float):
-        raise ValueError("wait expects a numeric argument: 'time'.")
+        return tool_error(
+            "wait expects a numeric argument: 'time'.",
+            hint="Podaj pole 'time' jako number >= 0, np. 5.",
+            details={
+                "received": {"time": wait_time},
+                "expected": {"time": "number >= 0"},
+            },
+        )
     if wait_time < 0:
-        raise ValueError("wait expects 'time' to be greater than or equal to 0.")
+        return tool_error(
+            "wait expects 'time' to be greater than or equal to 0.",
+            hint="Podaj pole 'time' jako liczbę sekund większą lub równą 0.",
+            details={
+                "received": {"time": wait_time},
+                "expected": {"time": "number >= 0"},
+            },
+        )
 
     next_task = args.get("next_task")
     if not isinstance(next_task, str) or next_task.strip() == "":
-        raise ValueError("wait expects a non-empty string argument: 'next_task'.")
+        return tool_error(
+            "wait expects a non-empty string argument: 'next_task'.",
+            hint="Podaj pole 'next_task' jako niepusty opis kolejnego kroku.",
+            details={
+                "received": {"next_task": next_task},
+                "expected": {"next_task": "non-empty string"},
+            },
+        )
 
     await asyncio.sleep(wait_time)
-    return {
-        "ok": True,
-        "output": f"Wiat time's up Your next action should be: {next_task.strip()}",
-    }
+    return tool_ok(f"Wiat time's up Your next action should be: {next_task.strip()}")
 
 
 wait_tool = Tool(

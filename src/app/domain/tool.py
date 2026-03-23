@@ -29,6 +29,38 @@ ToolHandler: TypeAlias = Callable[[dict[str, Any], Any | None], Awaitable[ToolRe
 logger = logging.getLogger(__name__)
 
 
+def tool_ok(output: Any) -> ToolResult:
+    return {"ok": True, "output": output}
+
+
+def tool_error(
+    error: str,
+    *,
+    hint: str | None = None,
+    details: dict[str, Any] | None = None,
+    retryable: bool = True,
+) -> ToolResult:
+    result: ToolResult = {
+        "ok": False,
+        "error": error,
+        "retryable": retryable,
+    }
+    if hint is not None:
+        result["hint"] = hint
+    if details is not None:
+        result["details"] = details
+    return result
+
+
+def tool_internal_error(*, tool_name: str) -> ToolResult:
+    return tool_error(
+        "Tool execution failed.",
+        hint="Spróbuj innego podejścia albo poinformuj użytkownika o problemie systemowym.",
+        details={"tool": tool_name},
+        retryable=False,
+    )
+
+
 @dataclass(slots=True, frozen=True)
 class Tool:
     type: ToolType
@@ -74,7 +106,12 @@ class ToolRegistry:
                 call_id or "-",
                 "Tool not found",
             )
-            return {"ok": False, "error": f"Tool not found: {name}"}
+            return tool_error(
+                f"Tool not found: {name}",
+                hint="Użyj jednej z dostępnych definicji tooli przekazanych w kontekście.",
+                details={"tool": name},
+                retryable=False,
+            )
 
         logger.info(
             "Tool request: name=%s call_id=%s payload=%s",
@@ -92,7 +129,13 @@ class ToolRegistry:
                 call_id or "-",
                 self._serialize_log_value(args),
             )
-            return {"ok": False, "error": str(exc) or "Tool execution failed"}
+            logger.debug(
+                "Tool failure details: name=%s call_id=%s error=%s",
+                name,
+                call_id or "-",
+                str(exc) or exc.__class__.__name__,
+            )
+            return tool_internal_error(tool_name=name)
 
         logger.info(
             "Tool response: name=%s call_id=%s result=%s",

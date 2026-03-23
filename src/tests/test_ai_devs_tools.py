@@ -104,22 +104,26 @@ class AIDevsToolsTest(unittest.IsolatedAsyncioTestCase):
             Settings(AI_DEVS_API_KEY="test-key", AI_DEVS_HUB_URL="https://hub.ag3nts.org"),
         )
 
-        with self.assertRaisesRegex(ValueError, "field 'born'"):
-            await tool.handler(
-                {
-                    "task": "people",
-                    "answer": [
-                        {
-                            "name": "Jan",
-                            "surname": "Kowalski",
-                            "gender": "M",
-                            "born": "1990",
-                            "city": "Grudziadz",
-                            "tags": ["transport"],
-                        }
-                    ],
-                }
-            )
+        result = await tool.handler(
+            {
+                "task": "people",
+                "answer": [
+                    {
+                        "name": "Jan",
+                        "surname": "Kowalski",
+                        "gender": "M",
+                        "born": "1990",
+                        "city": "Grudziadz",
+                        "tags": ["transport"],
+                    }
+                ],
+            }
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("field 'born'", result["error"])
+        self.assertEqual(result["details"]["field"], "born")
+        self.assertTrue(result["retryable"])
 
     async def test_verify_task_returns_error_payload_on_http_error(self) -> None:
         tool = verify_task_module.build_verify_task_tool(
@@ -149,8 +153,9 @@ class AIDevsToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"], "AI Devs verify endpoint returned HTTP 429.")
-        self.assertEqual(result["output"]["status_code"], 429)
-        self.assertEqual(result["output"]["response"]["retry_after"], 29)
+        self.assertEqual(result["details"]["status_code"], 429)
+        self.assertEqual(result["details"]["response"]["retry_after"], 29)
+        self.assertTrue(result["retryable"])
 
 
 if __name__ == "__main__":

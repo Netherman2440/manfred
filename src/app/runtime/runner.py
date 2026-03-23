@@ -26,6 +26,7 @@ from app.domain import (
     fail_agent,
     increment_agent_turn,
     start_agent,
+    tool_error,
 )
 from app.domain.provider import Provider
 from app.services.observability import ObservabilityService
@@ -203,12 +204,19 @@ class AgentRunner:
             ):
                 tool = self._tool_registry.get(function_call.name)
                 if tool is None:
-                    tool_result = {"ok": False, "error": f"Tool not found: {function_call.name}"}
+                    tool_result = tool_error(
+                        f"Tool not found: {function_call.name}",
+                        hint="Użyj jednej z dostępnych definicji tooli przekazanych w kontekście.",
+                        details={"tool": function_call.name},
+                        retryable=False,
+                    )
                 elif tool.type != "sync":
-                    tool_result = {
-                        "ok": False,
-                        "error": f"Unsupported tool type: {tool.type}",
-                    }
+                    tool_result = tool_error(
+                        f"Unsupported tool type: {tool.type}",
+                        hint="Wybierz tool typu sync albo zakończ tę ścieżkę działania.",
+                        details={"tool": function_call.name, "type": tool.type},
+                        retryable=False,
+                    )
                 else:
                     tool_result = await self._tool_registry.execute(
                         function_call.name,
@@ -296,21 +304,12 @@ class AgentRunner:
 
     @staticmethod
     def _serialize_tool_result_output(tool_name: str, tool_result: dict[str, Any]) -> str:
+        del tool_name
         if tool_result.get("ok"):
             output = tool_result.get("output")
             return AgentRunner._serialize_tool_output(output)
 
-        if tool_name == "verify_task" and "output" in tool_result:
-            return AgentRunner._serialize_tool_output(
-                {
-                    "ok": False,
-                    "error": tool_result.get("error"),
-                    "output": tool_result.get("output"),
-                }
-            )
-
-        error = tool_result.get("error")
-        return str(error) if error is not None else "Tool execution failed."
+        return AgentRunner._serialize_tool_output(tool_result)
 
     @staticmethod
     def _serialize_tool_output(output: Any) -> str:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, tool_error, tool_ok
 from app.services.audio import AudioService
 
 
@@ -28,10 +28,17 @@ def build_generate_audio_tool(audio_service: AudioService) -> Tool:
         del signal
         text = args.get("text")
         if not isinstance(text, str) or text.strip() == "":
-            raise ValueError("generate_audio expects a non-empty string argument: 'text'.")
+            return tool_error(
+                "generate_audio expects a non-empty string argument: 'text'.",
+                hint="Podaj pole 'text' jako niepusty tekst do syntezy mowy.",
+                details={
+                    "received": {"text": text},
+                    "expected": {"text": "non-empty string"},
+                },
+            )
 
         output_path = await audio_service.generate_audio(text)
-        return {"ok": True, "output": {"path": output_path}}
+        return tool_ok({"path": output_path})
 
     return Tool(
         type="sync",

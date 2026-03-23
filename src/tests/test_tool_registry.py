@@ -53,7 +53,16 @@ class ToolRegistryLoggingTest(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("app.domain.tool", level="ERROR") as captured:
             result = await registry.execute("failing_tool", {"prompt": "hello"}, call_id="call-456")
 
-        self.assertEqual(result, {"ok": False, "error": "boom"})
+        self.assertEqual(
+            result,
+            {
+                "ok": False,
+                "error": "Tool execution failed.",
+                "hint": "Spróbuj innego podejścia albo poinformuj użytkownika o problemie systemowym.",
+                "details": {"tool": "failing_tool"},
+                "retryable": False,
+            },
+        )
         joined_output = "\n".join(captured.output)
         self.assertIn("Tool execution failed: name=failing_tool call_id=call-456", joined_output)
 

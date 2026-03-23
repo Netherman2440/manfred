@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, tool_error, tool_ok
 from app.services.images import ImageService
 
 
@@ -28,10 +28,17 @@ def build_describe_image_tool(image_service: ImageService) -> Tool:
         del signal
         path = args.get("path")
         if not isinstance(path, str) or path.strip() == "":
-            raise ValueError("describe_image expects a non-empty string argument: 'path'.")
+            return tool_error(
+                "describe_image expects a non-empty string argument: 'path'.",
+                hint="Podaj pole 'path' jako ścieżkę do pliku graficznego w workspace.",
+                details={
+                    "received": {"path": path},
+                    "expected": {"path": "non-empty string"},
+                },
+            )
 
         description = await image_service.describe_image(path)
-        return {"ok": True, "output": description}
+        return tool_ok(description)
 
     return Tool(
         type="sync",

@@ -29,7 +29,16 @@ from app.domain.provider import (
     ProviderTextOutput,
 )
 from app.domain.session import Session
-from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, ToolRegistry, WebSearchToolDefinition
+from app.domain.tool import (
+    FunctionToolDefinition,
+    Tool,
+    ToolDefinition,
+    ToolRegistry,
+    WebSearchToolDefinition,
+    tool_error,
+    tool_internal_error,
+    tool_ok,
+)
 from app.domain.types import AgentStatus, AttachmentKind, ItemType, MessageRole, SessionStatus, TranscriptionStatus
 from app.domain.user import User
 
@@ -71,4 +80,7 @@ __all__ = [
     "TranscriptionStatus",
     "User",
     "WebSearchToolDefinition",
+    "tool_error",
+    "tool_internal_error",
+    "tool_ok",
 ]

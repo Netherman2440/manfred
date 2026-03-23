@@ -5,31 +5,52 @@ from typing import Any
 from app.agent.tools.files.common import (
     WORKSPACE_ROOT,
     build_filesystem_tool,
+    cannot_overwrite_directory_error,
     display_path,
-    ensure_string_argument,
-    ensure_text_argument,
-    resolve_tool_path,
+    validate_string_argument,
+    validate_workspace_path,
 )
+from app.domain.tool import tool_ok
 
 
 async def write_file_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
     del signal
-    path = ensure_string_argument(args, "path")
-    content = ensure_text_argument(args, "content")
-    full_path = resolve_tool_path(path)
+    path = validate_string_argument(
+        args,
+        "path",
+        tool_name="write_file",
+        hint="Podaj pole 'path' jako ścieżkę do pliku w workspace.",
+    )
+    if isinstance(path, dict):
+        return path
+
+    content = validate_string_argument(
+        args,
+        "content",
+        tool_name="write_file",
+        allow_empty=True,
+        strip_value=False,
+        hint="Podaj pole 'content' jako string z pełną treścią pliku.",
+    )
+    if isinstance(content, dict):
+        return content
+
+    full_path = validate_workspace_path(path, tool_name="write_file")
+    if isinstance(full_path, dict):
+        return full_path
 
     if full_path.exists() and not full_path.is_file():
-        raise IsADirectoryError(f"Cannot overwrite directory: {path}")
+        return cannot_overwrite_directory_error("write_file", path)
 
+    full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content, encoding="utf-8")
 
-    return {
-        "ok": True,
-        "output": {
+    return tool_ok(
+        {
             "path": display_path(full_path),
             "message": f"File written: {display_path(full_path)}",
-        },
-    }
+        }
+    )
 
 
 write_file_tool = build_filesystem_tool(

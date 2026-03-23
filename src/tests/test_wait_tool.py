@@ -38,8 +38,11 @@ class WaitToolTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_wait_tool_rejects_empty_next_task(self) -> None:
-        with self.assertRaisesRegex(ValueError, "next_task"):
-            await wait_module.wait_tool.handler({"time": 1, "next_task": "  "})
+        result = await wait_module.wait_tool.handler({"time": 1, "next_task": "  "})
+
+        self.assertFalse(result["ok"])
+        self.assertIn("next_task", result["error"])
+        self.assertEqual(result["details"]["expected"]["next_task"], "non-empty string")
 
 
 if __name__ == "__main__":

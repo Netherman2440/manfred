@@ -4,12 +4,21 @@ import os
 from pathlib import Path
 from typing import Any
 
-from app.agent.tools.files.common import WORKSPACE_ROOT, build_filesystem_tool, display_path, ensure_string_argument
+from app.agent.tools.files.common import WORKSPACE_ROOT, build_filesystem_tool, display_path, validate_string_argument
+from app.domain.tool import tool_ok
 
 
 async def search_files_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
     del signal
-    query = ensure_string_argument(args, "query")
+    query = validate_string_argument(
+        args,
+        "query",
+        tool_name="search_files",
+        hint="Podaj pole 'query' jako niepusty tekst, którego szukasz w plikach workspace.",
+    )
+    if isinstance(query, dict):
+        return query
+
     query_bytes = query.encode("utf-8")
     matches: list[str] = []
 
@@ -27,13 +36,12 @@ async def search_files_handler(args: dict[str, Any], signal: object | None = Non
             except OSError:
                 continue
 
-    return {
-        "ok": True,
-        "output": {
+    return tool_ok(
+        {
             "query": query,
             "matches": matches,
-        },
-    }
+        }
+    )
 
 
 search_files_tool = build_filesystem_tool(

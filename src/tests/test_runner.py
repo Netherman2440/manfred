@@ -5,13 +5,14 @@ from app.runtime.runner import AgentRunner
 
 
 class AgentRunnerToolSerializationTest(unittest.TestCase):
-    def test_verify_task_error_keeps_full_payload_for_model(self) -> None:
+    def test_tool_error_keeps_full_payload_for_model(self) -> None:
         serialized = AgentRunner._serialize_tool_result_output(
             "verify_task",
             {
                 "ok": False,
                 "error": "AI Devs verify endpoint returned HTTP 429.",
-                "output": {
+                "hint": "Check details.response before retrying.",
+                "details": {
                     "status_code": 429,
                     "response": {
                         "code": -985,
@@ -19,26 +20,34 @@ class AgentRunnerToolSerializationTest(unittest.TestCase):
                         "retry_after": 29,
                     },
                 },
+                "retryable": True,
             },
         )
 
         parsed = json.loads(serialized)
         self.assertFalse(parsed["ok"])
         self.assertEqual(parsed["error"], "AI Devs verify endpoint returned HTTP 429.")
-        self.assertEqual(parsed["output"]["status_code"], 429)
-        self.assertEqual(parsed["output"]["response"]["retry_after"], 29)
+        self.assertEqual(parsed["hint"], "Check details.response before retrying.")
+        self.assertEqual(parsed["details"]["status_code"], 429)
+        self.assertEqual(parsed["details"]["response"]["retry_after"], 29)
+        self.assertTrue(parsed["retryable"])
 
-    def test_other_tool_error_stays_plain_error_string(self) -> None:
+    def test_other_tool_error_also_stays_structured(self) -> None:
         serialized = AgentRunner._serialize_tool_result_output(
             "wait",
             {
                 "ok": False,
                 "error": "wait expects a numeric argument: 'time'.",
-                "output": {"time": "soon"},
+                "hint": "Pass time as a number >= 0.",
+                "details": {"received": {"time": "soon"}},
+                "retryable": True,
             },
         )
 
-        self.assertEqual(serialized, "wait expects a numeric argument: 'time'.")
+        parsed = json.loads(serialized)
+        self.assertFalse(parsed["ok"])
+        self.assertEqual(parsed["error"], "wait expects a numeric argument: 'time'.")
+        self.assertEqual(parsed["details"]["received"]["time"], "soon")
 
 
 if __name__ == "__main__":

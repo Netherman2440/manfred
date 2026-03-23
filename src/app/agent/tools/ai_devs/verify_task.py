@@ -5,7 +5,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from app.config import Settings
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, ToolResult, tool_error, tool_ok
 
 
 VERIFY_TASK_DEFINITION = FunctionToolDefinition(
@@ -43,15 +43,29 @@ def build_verify_task_tool(settings: Settings) -> Tool:
         del signal
 
         if not settings.AI_DEVS_API_KEY:
-            raise ValueError("AI_DEVS_API_KEY is not configured.")
+            return tool_error(
+                "AI_DEVS_API_KEY is not configured.",
+                hint="Skonfiguruj klucz AI_DEVS_API_KEY zanim użyjesz verify_task.",
+                details={"tool": "verify_task"},
+                retryable=False,
+            )
 
         task = args.get("task")
         if not isinstance(task, str) or task.strip() == "":
-            raise ValueError("verify_task expects a non-empty string argument: 'task'.")
+            return tool_error(
+                "verify_task expects a non-empty string argument: 'task'.",
+                hint="Podaj pole 'task' jako niepusty string, np. 'people'.",
+                details={
+                    "received": {"task": task},
+                    "expected": {"task": "non-empty string"},
+                },
+            )
 
         normalized_task = task.strip()
         normalized_answer = _normalize_answer(args.get("answer"))
         validated_answer = _validate_answer(normalized_task, normalized_answer)
+        if isinstance(validated_answer, dict) and validated_answer.get("ok") is False:
+            return validated_answer
 
         url = parse.urljoin(f"{settings.AI_DEVS_HUB_URL.rstrip('/')}/", "verify")
         body = json.dumps(
@@ -78,14 +92,15 @@ def build_verify_task_tool(settings: Settings) -> Tool:
             status_code = exc.code
             content_type = exc.headers.get("Content-Type", "application/json")
         except error.URLError as exc:
-            return {
-                "ok": False,
-                "error": f"Could not reach AI Devs verify endpoint: {exc.reason}",
-                "output": {
+            return tool_error(
+                f"Could not reach AI Devs verify endpoint: {exc.reason}",
+                hint="Sprawdź dostępność Centrali i spróbuj ponownie później.",
+                details={
                     "task": normalized_task,
                     "url": url,
+                    "reason": str(exc.reason),
                 },
-            }
+            )
 
         parsed_response = _parse_response_body(response_body, content_type)
         status_ok = 200 <= status_code < 300
@@ -101,16 +116,14 @@ def build_verify_task_tool(settings: Settings) -> Tool:
             result["submitted_answer_count"] = len(validated_answer)
 
         if status_ok:
-            return {
-                "ok": True,
-                "output": result,
-            }
+            return tool_ok(result)
 
-        return {
-            "ok": False,
-            "error": f"AI Devs verify endpoint returned HTTP {status_code}.",
-            "output": result,
-        }
+        return tool_error(
+            f"AI Devs verify endpoint returned HTTP {status_code}.",
+            hint="Sprawdź odpowiedź Centrali w details.response i popraw answer albo spróbuj ponownie później.",
+            details=result,
+            retryable=status_code in {408, 409, 425, 429} or 500 <= status_code < 600,
+        )
 
     return Tool(
         type="sync",
@@ -133,44 +146,134 @@ def _normalize_answer(answer: Any) -> Any:
         return answer
 
 
-def _validate_answer(task: str, answer: Any) -> Any:
+def _validate_answer(task: str, answer: Any) -> Any | ToolResult:
     if task != "people":
         return answer
 
     if not isinstance(answer, list):
-        raise ValueError("verify_task expects 'answer' to be a list of people objects for task 'people'.")
+        return tool_error(
+            "verify_task expects 'answer' to be a list of people objects for task 'people'.",
+            hint=(
+                "Dla tasku 'people' podaj listę obiektów z polami "
+                "name, surname, gender, born, city, tags."
+            ),
+            details={
+                "task": task,
+                "received": {"answer": answer},
+                "expected": {
+                    "answer": [
+                        {
+                            "name": "string",
+                            "surname": "string",
+                            "gender": "M | F",
+                            "born": "integer year",
+                            "city": "string",
+                            "tags": ["non-empty string"],
+                        }
+                    ]
+                },
+            },
+        )
 
     normalized_people: list[dict[str, Any]] = []
     for index, person in enumerate(answer, start=1):
         if not isinstance(person, dict):
-            raise ValueError(f"verify_task expects item {index} in 'answer' to be an object.")
+            return _people_validation_error(
+                index,
+                "object",
+                received=person,
+                task=task,
+            )
 
-        _ensure_string_field(person, "name", index=index)
-        _ensure_string_field(person, "surname", index=index)
-        gender = _ensure_string_field(person, "gender", index=index)
+        name_result = _ensure_string_field(person, "name", index=index, task=task)
+        if isinstance(name_result, dict):
+            return name_result
+
+        surname_result = _ensure_string_field(person, "surname", index=index, task=task)
+        if isinstance(surname_result, dict):
+            return surname_result
+
+        gender = _ensure_string_field(person, "gender", index=index, task=task)
+        if isinstance(gender, dict):
+            return gender
         if gender not in {"M", "F"}:
-            raise ValueError(f"verify_task expects item {index} field 'gender' to be 'M' or 'F'.")
+            return tool_error(
+                f"verify_task expects item {index} field 'gender' to be 'M' or 'F'.",
+                hint="Dla tasku 'people' ustaw gender jako 'M' albo 'F'.",
+                details={
+                    "task": task,
+                    "index": index,
+                    "field": "gender",
+                    "received": person.get("gender"),
+                    "expected": ["M", "F"],
+                },
+            )
 
         born = person.get("born")
         if not isinstance(born, int):
-            raise ValueError(f"verify_task expects item {index} field 'born' to be an integer year.")
+            return tool_error(
+                f"verify_task expects item {index} field 'born' to be an integer year.",
+                hint="Dla tasku 'people' ustaw born jako rok w formacie integer, np. 1990.",
+                details={
+                    "task": task,
+                    "index": index,
+                    "field": "born",
+                    "received": born,
+                    "expected": "integer year",
+                },
+            )
 
-        _ensure_string_field(person, "city", index=index)
+        city_result = _ensure_string_field(person, "city", index=index, task=task)
+        if isinstance(city_result, dict):
+            return city_result
 
         tags = person.get("tags")
         if not isinstance(tags, list) or not all(isinstance(tag, str) and tag.strip() for tag in tags):
-            raise ValueError(f"verify_task expects item {index} field 'tags' to be a list of non-empty strings.")
+            return tool_error(
+                f"verify_task expects item {index} field 'tags' to be a list of non-empty strings.",
+                hint="Dla tasku 'people' ustaw tags jako listę niepustych stringów.",
+                details={
+                    "task": task,
+                    "index": index,
+                    "field": "tags",
+                    "received": tags,
+                    "expected": "list of non-empty strings",
+                },
+            )
 
         normalized_people.append(person)
 
     return normalized_people
 
 
-def _ensure_string_field(person: dict[str, Any], field_name: str, *, index: int) -> str:
+def _ensure_string_field(person: dict[str, Any], field_name: str, *, index: int, task: str) -> str | ToolResult:
     value = person.get(field_name)
     if not isinstance(value, str) or value.strip() == "":
-        raise ValueError(f"verify_task expects item {index} field '{field_name}' to be a non-empty string.")
+        return tool_error(
+            f"verify_task expects item {index} field '{field_name}' to be a non-empty string.",
+            hint=f"Dla tasku 'people' uzupełnij pole '{field_name}' niepustym stringiem.",
+            details={
+                "task": task,
+                "index": index,
+                "field": field_name,
+                "received": value,
+                "expected": "non-empty string",
+            },
+        )
     return value
+
+
+def _people_validation_error(index: int, expected: str, *, received: Any, task: str) -> ToolResult:
+    return tool_error(
+        f"verify_task expects item {index} in 'answer' to be an object.",
+        hint="Dla tasku 'people' każde pole listy 'answer' musi być obiektem osoby.",
+        details={
+            "task": task,
+            "index": index,
+            "received": received,
+            "expected": expected,
+        },
+    )
 
 
 def _parse_response_body(response_body: bytes, content_type: str) -> Any:

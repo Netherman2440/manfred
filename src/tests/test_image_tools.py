@@ -49,6 +49,14 @@ class ImageToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {"ok": True, "output": {"path": "output/blue_robot.png"}})
 
+    async def test_describe_image_tool_returns_soft_error_for_missing_path_argument(self) -> None:
+        tool = build_describe_image_tool(StubImageService())
+
+        result = await tool.handler({"path": ""})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["expected"]["path"], "non-empty string")
+
 
 if __name__ == "__main__":
     unittest.main()

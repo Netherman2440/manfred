@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, tool_error, tool_ok
 from app.services.audio import AudioService
 
 
@@ -28,10 +28,17 @@ def build_transcribe_audio_tool(audio_service: AudioService) -> Tool:
         del signal
         path = args.get("path")
         if not isinstance(path, str) or path.strip() == "":
-            raise ValueError("transcribe_audio expects a non-empty string argument: 'path'.")
+            return tool_error(
+                "transcribe_audio expects a non-empty string argument: 'path'.",
+                hint="Podaj pole 'path' jako ścieżkę do pliku audio w workspace.",
+                details={
+                    "received": {"path": path},
+                    "expected": {"path": "non-empty string"},
+                },
+            )
 
         transcription = await audio_service.transcribe_audio(path)
-        return {"ok": True, "output": transcription}
+        return tool_ok(transcription)
 
     return Tool(
         type="sync",

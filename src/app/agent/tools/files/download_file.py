@@ -5,6 +5,7 @@ from typing import Any
 from urllib import error, parse, request
 
 from app.agent.tools.files.common import WORKSPACE_ROOT, build_filesystem_tool, display_path, resolve_tool_path
+from app.domain.tool import tool_error, tool_ok
 
 
 async def download_file_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
@@ -12,12 +13,26 @@ async def download_file_handler(args: dict[str, Any], signal: object | None = No
 
     url = args.get("url")
     if not isinstance(url, str) or url.strip() == "":
-        raise ValueError("download_file expects a non-empty string argument: 'url'.")
+        return tool_error(
+            "download_file expects a non-empty string argument: 'url'.",
+            hint="Podaj pole 'url' jako pełny adres zaczynający się od 'http://' lub 'https://'.",
+            details={
+                "received": {"url": url},
+                "expected": {"url": "absolute http/https URL"},
+            },
+        )
 
     normalized_url = url.strip()
     parsed_url = parse.urlparse(normalized_url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-        raise ValueError("download_file expects an absolute HTTP or HTTPS URL.")
+        return tool_error(
+            "download_file expects an absolute HTTP or HTTPS URL.",
+            hint="Podaj pełny URL z protokołem 'http://' lub 'https://'.",
+            details={
+                "received": {"url": normalized_url},
+                "expected": {"url": "absolute http/https URL"},
+            },
+        )
 
     req = request.Request(
         normalized_url,
@@ -34,21 +49,23 @@ async def download_file_handler(args: dict[str, Any], signal: object | None = No
             content_type = response.headers.get("Content-Type", "application/octet-stream")
             source_encoding = response.headers.get_content_charset()
     except error.HTTPError as exc:
-        return {
-            "ok": False,
-            "error": f"Could not download file: HTTP {exc.code}",
-            "output": {
+        return tool_error(
+            f"Could not download file: HTTP {exc.code}",
+            hint="Sprawdź URL albo spróbuj ponownie później, jeśli źródło chwilowo nie odpowiada.",
+            details={
                 "url": normalized_url,
+                "status_code": exc.code,
             },
-        }
+        )
     except error.URLError as exc:
-        return {
-            "ok": False,
-            "error": f"Could not download file: {exc.reason}",
-            "output": {
+        return tool_error(
+            f"Could not download file: {exc.reason}",
+            hint="Sprawdź czy URL jest poprawny i dostępny z sieci.",
+            details={
                 "url": normalized_url,
+                "reason": str(exc.reason),
             },
-        }
+        )
 
     target_path = _resolve_output_path(normalized_url)
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,10 +87,7 @@ async def download_file_handler(args: dict[str, Any], signal: object | None = No
     else:
         target_path.write_bytes(content_bytes)
 
-    return {
-        "ok": True,
-        "output": output,
-    }
+    return tool_ok(output)
 
 
 def _resolve_output_path(url: str) -> Path:

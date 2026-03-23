@@ -1,22 +1,44 @@
 from typing import Literal
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, tool_error, tool_ok
 
 
 Operation = Literal["add", "subtract", "multiply", "divide"]
 
 
-async def calculator_handler(args: dict[str, object], signal: object | None = None) -> dict[str, bool | str]:
+async def calculator_handler(args: dict[str, object], signal: object | None = None) -> dict[str, object]:
+    del signal
     operation = args.get("operation")
     a = args.get("a")
     b = args.get("b")
 
     if operation not in {"add", "subtract", "multiply", "divide"}:
-        raise ValueError(f"Unknown operation: {operation}")
-    if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
-        raise ValueError("Calculator expects numeric values for 'a' and 'b'.")
+        return tool_error(
+            f"Unknown operation: {operation}",
+            hint="Użyj jednej z operacji: add, subtract, multiply, divide.",
+            details={
+                "received": {"operation": operation},
+                "expected": {"operation": ["add", "subtract", "multiply", "divide"]},
+            },
+        )
+    if isinstance(a, bool) or not isinstance(a, (int, float)) or isinstance(b, bool) or not isinstance(b, (int, float)):
+        return tool_error(
+            "Calculator expects numeric values for 'a' and 'b'.",
+            hint="Podaj pola 'a' i 'b' jako liczby.",
+            details={
+                "received": {"a": a, "b": b},
+                "expected": {"a": "number", "b": "number"},
+            },
+        )
     if operation == "divide" and b == 0:
-        raise ValueError("Division by zero")
+        return tool_error(
+            "Division by zero",
+            hint="Dla operacji divide podaj 'b' różne od 0.",
+            details={
+                "received": {"a": a, "b": b, "operation": operation},
+                "expected": {"b": "number != 0"},
+            },
+        )
 
     if operation == "add":
         result = a + b
@@ -27,7 +49,7 @@ async def calculator_handler(args: dict[str, object], signal: object | None = No
     else:
         result = a / b
 
-    return {"ok": True, "output": str(result)}
+    return tool_ok(str(result))
 
 
 calculator_tool = Tool(
