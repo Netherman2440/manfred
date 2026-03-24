@@ -12,7 +12,9 @@ from app.agent.tools import (
     build_audio_tools,
     build_image_tools,
     calculator_tool,
+    delegate_tool,
     filesystem_tools,
+    send_message_tool,
     wait_tool,
 )
 from app.db.repositories import (
@@ -22,7 +24,7 @@ from app.db.repositories import (
     SessionRepository,
     UserRepository,
 )
-from app.domain import AgentConfig, Tool, ToolRegistry
+from app.domain import Tool, ToolRegistry
 from app.providers import OpenAIProvider, OpenAIProviderConfig
 from app.runtime import AgentRunner
 from app.services import (
@@ -37,6 +39,7 @@ from app.services import (
 from app.services.conversation_context import ConversationContextService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
+from app.workspace import AgentTemplateLoader
 
 
 def build_engine(database_url: str) -> Engine:
@@ -46,13 +49,6 @@ def build_engine(database_url: str) -> Engine:
 
 def build_session_factory(engine: Engine) -> Callable[[], Session]:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
-
-def load_system_prompt(path: str) -> str:
-    prompt_path = Path(path)
-    if not prompt_path.is_absolute():
-        prompt_path = Path(__file__).resolve().parent.parent / path
-    return prompt_path.read_text(encoding="utf-8").strip()
 
 
 def resolve_workspace_root(raw_path: str) -> Path:
@@ -91,6 +87,8 @@ def get_tools(settings: Settings, audio_service: AudioService, image_service: Im
     return [
         calculator_tool,
         wait_tool,
+        delegate_tool,
+        send_message_tool,
         *filesystem_tools,
         *build_audio_tools(audio_service),
         *build_image_tools(image_service),
@@ -105,18 +103,22 @@ def build_tool_registry(settings: Settings, audio_service: AudioService, image_s
     return registry
 
 
-def build_agent_config(settings: Settings, audio_service: AudioService, image_service: ImageService) -> AgentConfig:
+def resolve_default_llm_model(settings: Settings) -> str:
     if settings.LLM_PROVIDER == "openai":
-        model = settings.OPENAI_LLM_MODEL
-    elif settings.LLM_PROVIDER == "openrouter":
-        model = settings.OPEN_ROUTER_LLM_MODEL
-    else:
-        raise ValueError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
+        return settings.OPENAI_LLM_MODEL
+    if settings.LLM_PROVIDER == "openrouter":
+        return settings.OPEN_ROUTER_LLM_MODEL
+    raise ValueError(f"Unsupported LLM_PROVIDER: {settings.LLM_PROVIDER}")
 
-    return AgentConfig(
-        model=model,
-        task=load_system_prompt(settings.SYSTEM_PROMPT_PATH),
-        tool_names=tuple(tool.definition.name for tool in get_tools(settings, audio_service, image_service)),
+
+def build_agent_template_loader(settings: Settings, tool_registry: ToolRegistry) -> AgentTemplateLoader:
+    templates_dir = Path(settings.AGENT_TEMPLATES_DIR).expanduser()
+    if not templates_dir.is_absolute():
+        templates_dir = BASE_DIR / templates_dir
+    return AgentTemplateLoader(
+        templates_dir=templates_dir.resolve(strict=False),
+        tool_registry=tool_registry,
+        default_model=resolve_default_llm_model(settings),
     )
 
 
@@ -179,25 +181,26 @@ class Container(containers.DeclarativeContainer):
         audio_service=audio_service,
     )
     chat_input_builder = providers.Singleton(ChatInputBuilder)
-    conversation_context_service = providers.Factory(
-        ConversationContextService,
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        default_user_id=settings.provided.DEFAULT_USER_ID,
-        default_user_name=settings.provided.DEFAULT_USER_NAME,
-    )
     tool_registry = providers.Singleton(
         build_tool_registry,
         settings=settings,
         audio_service=audio_service,
         image_service=image_service,
     )
-    agent_config = providers.Singleton(
-        build_agent_config,
+    agent_template_loader = providers.Singleton(
+        build_agent_template_loader,
         settings=settings,
-        audio_service=audio_service,
-        image_service=image_service,
+        tool_registry=tool_registry,
+    )
+    conversation_context_service = providers.Factory(
+        ConversationContextService,
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        agent_template_loader=agent_template_loader,
+        default_user_id=settings.provided.DEFAULT_USER_ID,
+        default_user_name=settings.provided.DEFAULT_USER_NAME,
+        root_agent_template_name=settings.provided.ROOT_AGENT_TEMPLATE,
     )
     provider_config = providers.Singleton(build_provider_config, settings=settings)
     provider = providers.Singleton(build_provider, config=provider_config)
@@ -211,14 +214,17 @@ class Container(containers.DeclarativeContainer):
         provider=provider,
         observability=observability_service,
         max_turn_count=settings.provided.AGENT_MAX_TURNS,
+        subagent_max_turn_count=settings.provided.SUBAGENT_MAX_TURNS,
+        max_agent_depth=settings.provided.MAX_AGENT_DEPTH,
+        agent_template_loader=agent_template_loader,
     )
 
 
     chat_service = providers.Factory(
         ChatService,
         item_repository=item_repository,
+        agent_repository=agent_repository,
         attachment_service=attachment_service,
-        agent_config=agent_config,
         tool_registry=tool_registry,
         agent_runner=agent_runner,
         observability=observability_service,

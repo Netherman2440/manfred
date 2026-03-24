@@ -107,14 +107,20 @@ class StubConversationContextService:
         del session_id, user
         return self._session
 
-    def load_or_create_root_agent(self, session: Session, agent_config: AgentConfig) -> Agent:
-        del session, agent_config
+    def load_or_create_root_agent(self, session: Session) -> Agent:
+        del session
         return self._agent
 
 
 class StubAgentRunner:
     async def run_agent(self, agent_id: str) -> object:
         raise NotImplementedError
+
+
+class StubAgentRepository:
+    def get_by_id(self, agent_id: str) -> Agent | None:
+        del agent_id
+        return None
 
 
 class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
@@ -136,8 +142,12 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
             session_id=session.id,
             root_agent_id="agent-123",
             parent_id=None,
+            source_call_id=None,
             depth=0,
             status=AgentStatus.PENDING,
+            waiting_for=(),
+            result=None,
+            error=None,
             turn_count=0,
             config=agent_config,
             created_at=timestamp,
@@ -163,8 +173,8 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
         attachment_service = StubAttachmentService([attachment])
         service = ChatService(
             item_repository=StubItemRepository(),
+            agent_repository=StubAgentRepository(),
             attachment_service=attachment_service,
-            agent_config=agent_config,
             tool_registry=ToolRegistry(max_log_value_length=100),
             agent_runner=StubAgentRunner(),
             observability=ObservabilityService(),

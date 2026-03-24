@@ -72,6 +72,17 @@ class ItemRepository:
         items = self.list_by_agent(agent_id)
         return items[-1].sequence if items else 0
 
+    def find_function_call(self, agent_id: str, call_id: str) -> Item | None:
+        with self._session_factory() as session:
+            entity = session.scalars(
+                select(ItemModel)
+                .where(ItemModel.agent_id == agent_id)
+                .where(ItemModel.call_id == call_id)
+                .where(ItemModel.type == ItemType.FUNCTION_CALL.value)
+                .order_by(ItemModel.sequence.desc())
+            ).first()
+            return self._to_domain(entity) if entity else None
+
     def update(self, item: Item) -> Item:
         with self._session_factory() as session:
             entity = session.get(ItemModel, item.id)

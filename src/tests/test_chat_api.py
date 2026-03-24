@@ -1,13 +1,14 @@
 import unittest
 from datetime import UTC, datetime
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from starlette.datastructures import FormData, UploadFile
 
-from app.api.v1.chat.api import chat, upload_attachments
-from app.api.v1.chat.schema import ChatRequest
+from app.api.v1.chat.api import chat, deliver, get_agent, upload_attachments
+from app.api.v1.chat.schema import ChatRequest, DeliverRequest
 from app.domain import (
+    AgentState,
     Attachment,
     AttachmentKind,
     ChatResponse,
@@ -124,6 +125,39 @@ class StubChatApiService:
             error=None,
         )
 
+    def get_agent_state(self, agent_id: str) -> AgentState:
+        return AgentState(
+            agent_id=agent_id,
+            session_id="sess-123",
+            root_agent_id="agent-123",
+            parent_id=None,
+            source_call_id=None,
+            model="gpt-test",
+            status="waiting",
+            depth=0,
+            turn_count=2,
+            waiting_for=[],
+            result=None,
+            error=None,
+        )
+
+    async def deliver_result(self, *, agent_id: str, call_id: str, output: object, is_error: bool) -> AgentState:
+        del call_id, output, is_error
+        return AgentState(
+            agent_id=agent_id,
+            session_id="sess-123",
+            root_agent_id="agent-123",
+            parent_id=None,
+            source_call_id=None,
+            model="gpt-test",
+            status="completed",
+            depth=0,
+            turn_count=3,
+            waiting_for=[],
+            result="Done",
+            error=None,
+        )
+
 
 class ChatApiTest(unittest.IsolatedAsyncioTestCase):
     async def test_upload_endpoint_returns_session_and_attachment_payload(self) -> None:
@@ -179,6 +213,7 @@ class ChatApiTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as captured:
             await chat(
                 payload=payload,
+                http_response=Response(),
                 chat_service=StubChatApiService(
                     error=AttachmentValidationError("Attachment att-999 does not belong to session sess-123.")
                 ),
@@ -191,8 +226,26 @@ class ChatApiTest(unittest.IsolatedAsyncioTestCase):
 
         response = await chat(
             payload=payload,
+            http_response=Response(),
             chat_service=StubChatApiService(),
         )
 
         self.assertEqual(response.status, "completed")
         self.assertEqual(response.attachments[0].workspace_path, "input/sess-123/20260323_note.txt")
+
+    async def test_get_agent_endpoint_returns_state_payload(self) -> None:
+        response = await get_agent(agent_id="agent-123", chat_service=StubChatApiService())
+
+        self.assertEqual(response.agent_id, "agent-123")
+        self.assertEqual(response.status, "waiting")
+
+    async def test_deliver_endpoint_returns_agent_state_payload(self) -> None:
+        response = await deliver(
+            agent_id="agent-123",
+            payload=DeliverRequest.model_validate({"callId": "call-1", "output": "OK"}),
+            http_response=Response(),
+            chat_service=StubChatApiService(),
+        )
+
+        self.assertEqual(response.agent_id, "agent-123")
+        self.assertEqual(response.status, "completed")

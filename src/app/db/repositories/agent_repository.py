@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models.agent import AgentModel
-from app.domain.agent import Agent, AgentConfig
+from app.domain.agent import Agent, AgentConfig, WaitingFor
 from app.domain.types import AgentStatus
 
 
@@ -21,8 +21,12 @@ class AgentRepository:
         agent_id: str | None = None,
         root_agent_id: str | None = None,
         parent_id: str | None = None,
+        source_call_id: str | None = None,
         depth: int = 0,
         status: AgentStatus = AgentStatus.PENDING,
+        waiting_for: tuple[WaitingFor, ...] = (),
+        result: object | None = None,
+        error: str | None = None,
         turn_count: int = 0,
     ) -> Agent:
         new_agent_id = agent_id or str(uuid.uuid4())
@@ -31,11 +35,15 @@ class AgentRepository:
             session_id=session_id,
             root_agent_id=root_agent_id or new_agent_id,
             parent_id=parent_id,
+            source_call_id=source_call_id,
             depth=depth,
             status=status.value,
             model=config.model,
             task=config.task,
             tool_names=list(config.tool_names),
+            waiting_for=[self._waiting_to_record(wait) for wait in waiting_for],
+            result=result,
+            error=error,
             turn_count=turn_count,
         )
         with self._session_factory() as session:
@@ -72,11 +80,15 @@ class AgentRepository:
             entity.session_id = agent.session_id
             entity.root_agent_id = agent.root_agent_id
             entity.parent_id = agent.parent_id
+            entity.source_call_id = agent.source_call_id
             entity.depth = agent.depth
             entity.status = agent.status.value
             entity.model = agent.config.model
             entity.task = agent.config.task
             entity.tool_names = list(agent.config.tool_names)
+            entity.waiting_for = [self._waiting_to_record(wait) for wait in agent.waiting_for]
+            entity.result = agent.result
+            entity.error = agent.error
             entity.turn_count = agent.turn_count
             session.commit()
             session.refresh(entity)
@@ -98,8 +110,21 @@ class AgentRepository:
             session_id=entity.session_id,
             root_agent_id=entity.root_agent_id,
             parent_id=entity.parent_id,
+            source_call_id=entity.source_call_id,
             depth=entity.depth,
             status=AgentStatus(entity.status),
+            waiting_for=tuple(
+                WaitingFor(
+                    call_id=record["call_id"],
+                    type=record["type"],
+                    name=record["name"],
+                    description=record.get("description"),
+                    agent_id=record.get("agent_id"),
+                )
+                for record in (entity.waiting_for or [])
+            ),
+            result=entity.result,
+            error=entity.error,
             turn_count=entity.turn_count,
             config=AgentConfig(
                 model=entity.model,
@@ -109,3 +134,13 @@ class AgentRepository:
             created_at=entity.created_at,
             updated_at=entity.updated_at,
         )
+
+    @staticmethod
+    def _waiting_to_record(wait: WaitingFor) -> dict[str, object]:
+        return {
+            "call_id": wait.call_id,
+            "type": wait.type,
+            "name": wait.name,
+            "description": wait.description,
+            "agent_id": wait.agent_id,
+        }

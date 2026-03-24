@@ -1,8 +1,16 @@
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from app.api.v1.chat.schema import AttachmentPayload, AttachmentUploadResponse, ChatRequest, ChatResponse
+from app.api.v1.chat.schema import (
+    AgentStateResponse,
+    AttachmentPayload,
+    AttachmentUploadResponse,
+    ChatRequest,
+    ChatResponse,
+    DeliverRequest,
+    WaitingForPayload,
+)
 from app.container import Container
 from app.services.attachments import AttachmentService, AttachmentValidationError
 from app.services.chat_service import ChatService
@@ -59,24 +67,95 @@ async def upload_attachments(
 @inject
 async def chat(
     payload: ChatRequest,
+    http_response: Response,
     chat_service: ChatService = Depends(Provide[Container.chat_service]),
 ) -> ChatResponse:
     try:
-        response = await chat_service.process_chat(payload.to_domain())
+        chat_response = await chat_service.process_chat(payload.to_domain())
     except ChatValidationError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
     except AttachmentValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    if chat_response.status == "waiting":
+        http_response.status_code = status.HTTP_202_ACCEPTED
+
     return ChatResponse(
-        userId=response.user_id,
-        sessionId=response.session_id,
-        agentId=response.agent_id,
-        model=response.model,
-        status=response.status,
-        output=response.output,
-        attachments=[AttachmentPayload.from_domain(attachment) for attachment in response.attachments],
-        error=response.error,
+        userId=chat_response.user_id,
+        sessionId=chat_response.session_id,
+        agentId=chat_response.agent_id,
+        model=chat_response.model,
+        status=chat_response.status,
+        output=chat_response.output,
+        waitingFor=[WaitingForPayload.from_domain(wait) for wait in chat_response.waiting_for],
+        attachments=[AttachmentPayload.from_domain(attachment) for attachment in chat_response.attachments],
+        error=chat_response.error,
+    )
+
+
+@router.get("/agents/{agent_id}", response_model=AgentStateResponse)
+@inject
+async def get_agent(
+    agent_id: str,
+    chat_service: ChatService = Depends(Provide[Container.chat_service]),
+) -> AgentStateResponse:
+    try:
+        agent = chat_service.get_agent_state(agent_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return AgentStateResponse(
+        agentId=agent.agent_id,
+        sessionId=agent.session_id,
+        rootAgentId=agent.root_agent_id,
+        parentId=agent.parent_id,
+        sourceCallId=agent.source_call_id,
+        model=agent.model,
+        status=agent.status,
+        depth=agent.depth,
+        turnCount=agent.turn_count,
+        waitingFor=[WaitingForPayload.from_domain(wait) for wait in agent.waiting_for],
+        result=agent.result,
+        error=agent.error,
+    )
+
+
+@router.post("/agents/{agent_id}/deliver", response_model=AgentStateResponse)
+@inject
+async def deliver(
+    agent_id: str,
+    payload: DeliverRequest,
+    http_response: Response,
+    chat_service: ChatService = Depends(Provide[Container.chat_service]),
+) -> AgentStateResponse:
+    try:
+        agent = await chat_service.deliver_result(
+            agent_id=agent_id,
+            call_id=payload.call_id,
+            output=payload.output,
+            is_error=payload.is_error,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    if agent.status == "waiting":
+        http_response.status_code = status.HTTP_202_ACCEPTED
+
+    return AgentStateResponse(
+        agentId=agent.agent_id,
+        sessionId=agent.session_id,
+        rootAgentId=agent.root_agent_id,
+        parentId=agent.parent_id,
+        sourceCallId=agent.source_call_id,
+        model=agent.model,
+        status=agent.status,
+        depth=agent.depth,
+        turnCount=agent.turn_count,
+        waitingFor=[WaitingForPayload.from_domain(wait) for wait in agent.waiting_for],
+        result=agent.result,
+        error=agent.error,
     )
 
 

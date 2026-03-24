@@ -1,14 +1,19 @@
 from app.domain.agent import (
     Agent,
     AgentConfig,
+    WaitingFor,
+    cancel_agent,
     complete_agent,
+    deliver_one,
     fail_agent,
     increment_agent_turn,
     prepare_agent_for_next_turn,
     start_agent,
+    wait_for_many,
 )
 from app.domain.attachment import Attachment
 from app.domain.chat import (
+    AgentState,
     ChatFunctionCallOutput,
     ChatOutputItem,
     ChatRequest,
@@ -45,9 +50,11 @@ from app.domain.user import User
 __all__ = [
     "Agent",
     "AgentConfig",
+    "AgentState",
     "AgentStatus",
     "Attachment",
     "AttachmentKind",
+    "cancel_agent",
     "ChatFunctionCallOutput",
     "ChatOutputItem",
     "ChatRequest",
@@ -55,6 +62,7 @@ __all__ = [
     "ChatTextOutput",
     "ChatTurn",
     "complete_agent",
+    "deliver_one",
     "fail_agent",
     "FunctionToolDefinition",
     "Item",
@@ -79,8 +87,10 @@ __all__ = [
     "ToolRegistry",
     "TranscriptionStatus",
     "User",
+    "WaitingFor",
     "WebSearchToolDefinition",
     "tool_error",
     "tool_internal_error",
     "tool_ok",
+    "wait_for_many",
 ]

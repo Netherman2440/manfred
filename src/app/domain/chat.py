@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, TypedDict
 
-from app.domain.agent import Agent
+from app.domain.agent import Agent, WaitingFor
 from app.domain.attachment import Attachment
 from app.domain.item import Item
 from app.domain.session import Session
@@ -49,7 +49,24 @@ class ChatResponse:
     session_id: str
     agent_id: str
     model: str
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "waiting", "failed"]
     output: list[ChatOutputItem] = field(default_factory=list)
+    waiting_for: list[WaitingFor] = field(default_factory=list)
     attachments: list[Attachment] = field(default_factory=list)
+    error: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class AgentState:
+    agent_id: str
+    session_id: str
+    root_agent_id: str
+    parent_id: str | None
+    source_call_id: str | None
+    model: str
+    status: Literal["pending", "running", "waiting", "completed", "failed", "cancelled"]
+    depth: int
+    turn_count: int
+    waiting_for: list[WaitingFor] = field(default_factory=list)
+    result: Any | None = None
     error: str | None = None

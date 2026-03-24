@@ -1,7 +1,8 @@
 from app.db.repositories.agent_repository import AgentRepository
 from app.db.repositories.session_repository import SessionRepository
 from app.db.repositories.user_repository import UserRepository
-from app.domain import Agent, AgentConfig, Session, User, prepare_agent_for_next_turn
+from app.domain import Agent, Session, User, prepare_agent_for_next_turn
+from app.workspace import AgentTemplateLoader
 
 
 class ConversationContextService:
@@ -11,14 +12,18 @@ class ConversationContextService:
         user_repository: UserRepository,
         session_repository: SessionRepository,
         agent_repository: AgentRepository,
+        agent_template_loader: AgentTemplateLoader,
         default_user_id: str,
         default_user_name: str,
+        root_agent_template_name: str,
     ) -> None:
         self._user_repository = user_repository
         self._session_repository = session_repository
         self._agent_repository = agent_repository
+        self._agent_template_loader = agent_template_loader
         self._default_user_id = default_user_id
         self._default_user_name = default_user_name
+        self._root_agent_template_name = root_agent_template_name
 
     def ensure_default_user(self) -> User:
         user = self._user_repository.get_by_id(self._default_user_id)
@@ -38,7 +43,10 @@ class ConversationContextService:
 
         return self._session_repository.create(user_id=user.id)
 
-    def load_or_create_root_agent(self, session: Session, agent_config: AgentConfig) -> Agent:
+    def load_or_create_root_agent(self, session: Session) -> Agent:
+        root_template = self._agent_template_loader.load(self._root_agent_template_name)
+        agent_config = root_template.to_agent_config()
+
         if session.root_agent_id:
             agent = self._agent_repository.get_by_id(session.root_agent_id)
             if agent is not None:

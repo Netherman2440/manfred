@@ -17,11 +17,15 @@ class AgentModel(Base):
     )
     root_agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     task: Mapped[str] = mapped_column(Text, nullable=False)
     tool_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    waiting_for: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
+    result: Mapped[dict[str, object] | list[object] | str | int | float | bool | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     turn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -1,9 +1,10 @@
 import json
 
+from app.db.repositories.agent_repository import AgentRepository
 from app.db.repositories.item_repository import ItemRepository
 from app.domain import (
     Agent,
-    AgentConfig,
+    AgentState,
     Attachment,
     ChatFunctionCallOutput,
     ChatOutputItem,
@@ -32,8 +33,8 @@ class ChatService:
         self,
         *,
         item_repository: ItemRepository,
+        agent_repository: AgentRepository,
         attachment_service: AttachmentService,
-        agent_config: AgentConfig,
         tool_registry: ToolRegistry,
         agent_runner: AgentRunner,
         observability: ObservabilityService,
@@ -41,8 +42,8 @@ class ChatService:
         conversation_context: ConversationContextService,
     ) -> None:
         self._item_repository = item_repository
+        self._agent_repository = agent_repository
         self._attachment_service = attachment_service
-        self._agent_config = agent_config
         self._tool_registry = tool_registry
         self._agent_runner = agent_runner
         self._observability = observability
@@ -52,8 +53,12 @@ class ChatService:
     async def prepare_chat_turn(self, request: ChatRequest) -> ChatTurn:
         user = self._conversation_context.ensure_default_user()
         session = self._conversation_context.load_or_create_session(request.session_id, user)
-        tools = self._resolve_tools(self._agent_config.tool_names)
-        agent = self._conversation_context.load_or_create_root_agent(session, self._agent_config)
+        try:
+            agent = self._conversation_context.load_or_create_root_agent(session)
+        except ValueError as exc:
+            raise ChatValidationError(str(exc)) from exc
+
+        tools = self._resolve_tools(agent.config.tool_names)
         attachments = self._attachment_service.get_for_session(
             session_id=session.id,
             attachment_ids=request.attachment_ids,
@@ -125,6 +130,26 @@ class ChatService:
             self._observability.flush()
             return response
 
+    async def deliver_result(self, *, agent_id: str, call_id: str, output: object, is_error: bool) -> AgentState:
+        try:
+            run_result = await self._agent_runner.deliver_result(
+                agent_id=agent_id,
+                call_id=call_id,
+                output=output,
+                is_error=is_error,
+            )
+        except ValueError as exc:
+            if "does not exist" in str(exc):
+                raise LookupError(str(exc)) from exc
+            raise
+        return self._to_agent_state(run_result.agent)
+
+    def get_agent_state(self, agent_id: str) -> AgentState:
+        agent = self._agent_repository.get_by_id(agent_id)
+        if agent is None:
+            raise LookupError(f"Agent {agent_id} does not exist.")
+        return self._to_agent_state(agent)
+
     def _create_user_message_item(
         self,
         session_id: str,
@@ -173,6 +198,8 @@ class ChatService:
                 )
 
         status = "failed" if error is not None or agent.status.value == "failed" else "completed"
+        if agent.status.value == "waiting":
+            status = "waiting"
         return ChatResponse(
             user_id=chat_turn.user.id,
             session_id=chat_turn.session.id,
@@ -180,8 +207,26 @@ class ChatService:
             model=agent.config.model,
             status=status,
             output=output,
+            waiting_for=list(agent.waiting_for),
             attachments=chat_turn.attachments,
             error=error,
+        )
+
+    @staticmethod
+    def _to_agent_state(agent: Agent) -> AgentState:
+        return AgentState(
+            agent_id=agent.id,
+            session_id=agent.session_id,
+            root_agent_id=agent.root_agent_id,
+            parent_id=agent.parent_id,
+            source_call_id=agent.source_call_id,
+            model=agent.config.model,
+            status=agent.status.value,
+            depth=agent.depth,
+            turn_count=agent.turn_count,
+            waiting_for=list(agent.waiting_for),
+            result=agent.result,
+            error=agent.error,
         )
 
     @staticmethod
@@ -228,6 +273,16 @@ class ChatService:
             "status": response.status,
             "error": response.error,
             "output": response.output,
+            "waiting_for": [
+                {
+                    "call_id": wait.call_id,
+                    "type": wait.type,
+                    "name": wait.name,
+                    "description": wait.description,
+                    "agent_id": wait.agent_id,
+                }
+                for wait in response.waiting_for
+            ],
             "attachments": ChatService._serialize_attachments(response.attachments),
         }
 
