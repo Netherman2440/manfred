@@ -4,6 +4,7 @@ from app.agent.tools.audio import build_audio_tools
 from app.agent.tools.delegate import delegate_tool
 from app.agent.tools.images import build_image_tools
 from app.agent.tools.send_message import send_message_tool
+from app.agent.tools.tiktokenizer import tiktokenizer_tool
 from app.agent.tools.wait import wait_tool
 from app.agent.tools.files.download_file import download_file_tool
 from app.agent.tools.file_system import filesystem_tools, fs_manage_tool, fs_read_tool, fs_search_tool, fs_write_tool
@@ -22,4 +23,5 @@ __all__ = [
     "fs_manage_tool",
     "filesystem_tools",
     "send_message_tool",
+    "tiktokenizer_tool",
 ]

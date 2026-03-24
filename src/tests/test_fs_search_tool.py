@@ -71,6 +71,26 @@ class FsSearchToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["details"]["argument"], "pattern")
 
+    async def test_treats_blank_path_as_workspace_root(self) -> None:
+        test_file = fs_search_module.WORKSPACE_ROOT / "blank-path-marker.txt"
+        test_file.write_text("workspace root marker\n", encoding="utf-8")
+
+        try:
+            result = await fs_search_module.fs_search_tool.handler(
+                {
+                    "path": "",
+                    "pattern": "blank-path-marker",
+                    "target": "filename",
+                }
+            )
+        finally:
+            if test_file.exists():
+                test_file.unlink()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["output"]["count"], 1)
+        self.assertEqual(result["output"]["results"][0]["path"], "blank-path-marker.txt")
+
 
 if __name__ == "__main__":
     unittest.main()

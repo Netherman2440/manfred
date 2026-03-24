@@ -36,7 +36,7 @@ from app.domain import (
 )
 from app.runtime.runner import AgentRunner
 from app.services.observability import ObservabilityService
-from app.workspace import AgentTemplateLoader
+from app.workspaces import AgentTemplateLoader
 
 
 class QueueProvider:

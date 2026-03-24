@@ -34,7 +34,7 @@ from app.domain import (
 )
 from app.domain.provider import Provider
 from app.services.observability import ObservabilityService
-from app.workspace import AgentTemplateLoader
+from app.workspaces import AgentTemplateLoader
 
 
 @dataclass(slots=True, frozen=True)

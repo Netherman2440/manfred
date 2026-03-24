@@ -64,6 +64,13 @@ class FsReadToolTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["details"]["code"], "path_escape")
         self.assertEqual(result["details"]["path"], "../outside.txt")
 
+    async def test_treats_blank_path_as_workspace_root(self) -> None:
+        result = await fs_read_module.fs_read_tool.handler({"path": "", "depth": 1})
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["output"]["path"], ".")
+        self.assertEqual(result["output"]["type"], "directory")
+
 
 if __name__ == "__main__":
     unittest.main()

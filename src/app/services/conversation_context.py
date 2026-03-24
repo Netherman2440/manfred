@@ -2,7 +2,7 @@ from app.db.repositories.agent_repository import AgentRepository
 from app.db.repositories.session_repository import SessionRepository
 from app.db.repositories.user_repository import UserRepository
 from app.domain import Agent, Session, User, prepare_agent_for_next_turn
-from app.workspace import AgentTemplateLoader
+from app.workspaces import AgentTemplateLoader
 
 
 class ConversationContextService:

@@ -16,6 +16,7 @@ from app.agent.tools import (
     download_file_tool,
     filesystem_tools,
     send_message_tool,
+    tiktokenizer_tool,
     wait_tool,
 )
 from app.db.repositories import (
@@ -40,7 +41,7 @@ from app.services import (
 from app.services.conversation_context import ConversationContextService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
-from app.workspace import AgentTemplateLoader
+from app.workspaces import AgentTemplateLoader
 
 
 def build_engine(database_url: str) -> Engine:
@@ -90,6 +91,7 @@ def get_tools(settings: Settings, audio_service: AudioService, image_service: Im
         wait_tool,
         delegate_tool,
         send_message_tool,
+        tiktokenizer_tool,
         download_file_tool,
         *filesystem_tools,
         *build_audio_tools(audio_service),
