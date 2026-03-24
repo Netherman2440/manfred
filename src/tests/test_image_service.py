@@ -34,6 +34,32 @@ class StubOpenAIClient:
 
 
 class OpenAIImageServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_analyze_image_uses_custom_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace_root = Path(tmp_dir)
+            input_dir = workspace_root / "input"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            (input_dir / "sample.png").write_bytes(b"fake image")
+
+            client = StubOpenAIClient()
+            service = OpenAIImageService(
+                base_url="https://api.openai.com/v1",
+                api_key="test-key",
+                workspace_root=workspace_root,
+                client=client,
+            )
+
+            analysis = await service.analyze_image(
+                "input/sample.png",
+                "Classify whether this image contains a vehicle. Answer yes or no.",
+            )
+
+        self.assertEqual(analysis, "A small red square on a white background.")
+        self.assertEqual(
+            client.responses.calls[0]["input"][0]["content"][0]["text"],
+            "Classify whether this image contains a vehicle. Answer yes or no.",
+        )
+
     async def test_describe_image_returns_description(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             workspace_root = Path(tmp_dir)

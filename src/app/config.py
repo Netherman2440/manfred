@@ -30,9 +30,8 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SECONDS: int = 120
     LLM_PROVIDER: str = "openrouter"
 
-    ROOT_AGENT_TEMPLATE: str = "mandfred"
-    AGENT_TEMPLATES_DIR: str = str(BASE_DIR / "workspace" / "agents")
-    SYSTEM_PROMPT_PATH: str = "app/agent/prompts/system_prompt.md"
+    ROOT_AGENT_TEMPLATE: str = "azazel"
+    AGENT_TEMPLATES_DIR: str = str(BASE_DIR / "src"/"app"/"agent"/ "subagents")
 
     OPENAI_URL: str = "https://api.openai.com/v1"
     OPENAI_API_KEY: str = ""

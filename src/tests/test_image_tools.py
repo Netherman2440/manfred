@@ -19,6 +19,11 @@ build_create_image_tool = load_tool_builder(
     "app/agent/tools/images/create_image.py",
     "build_create_image_tool",
 )
+build_analyze_image_tool = load_tool_builder(
+    "image_analyze_tool",
+    "app/agent/tools/images/analyze_image.py",
+    "build_analyze_image_tool",
+)
 build_describe_image_tool = load_tool_builder(
     "image_describe_tool",
     "app/agent/tools/images/describe_image.py",
@@ -33,8 +38,21 @@ class StubImageService:
     async def describe_image(self, path: str) -> str:
         return f"description:{path}"
 
+    async def analyze_image(self, path: str, prompt: str) -> str:
+        return f"analysis:{path}:{prompt}"
+
 
 class ImageToolsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_analyze_image_tool_returns_plain_analysis(self) -> None:
+        tool = build_analyze_image_tool(StubImageService())
+
+        result = await tool.handler({"path": "input/demo.png", "prompt": "Classify the product"})
+
+        self.assertEqual(
+            result,
+            {"ok": True, "output": "analysis:input/demo.png:Classify the product"},
+        )
+
     async def test_describe_image_tool_returns_plain_description(self) -> None:
         tool = build_describe_image_tool(StubImageService())
 
@@ -56,6 +74,14 @@ class ImageToolsTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["ok"])
         self.assertEqual(result["details"]["expected"]["path"], "non-empty string")
+
+    async def test_analyze_image_tool_returns_soft_error_for_missing_prompt_argument(self) -> None:
+        tool = build_analyze_image_tool(StubImageService())
+
+        result = await tool.handler({"path": "input/demo.png", "prompt": ""})
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["details"]["expected"]["prompt"], "non-empty string")
 
 
 if __name__ == "__main__":

@@ -43,8 +43,13 @@ class OpenAIImageService(ImageService):
         self._output_dir.mkdir(parents=True, exist_ok=True)
 
     async def describe_image(self, path: str) -> str:
+        return await self.analyze_image(path, DEFAULT_DESCRIPTION_PROMPT)
+
+    async def analyze_image(self, path: str, prompt: str) -> str:
         self._ensure_api_key()
         image_path = self._resolve_workspace_path(path)
+        if prompt.strip() == "":
+            raise ValueError("Prompt cannot be empty.")
 
         if not image_path.exists():
             raise FileNotFoundError(f"Image file not found: {path}")
@@ -60,7 +65,7 @@ class OpenAIImageService(ImageService):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "input_text", "text": DEFAULT_DESCRIPTION_PROMPT},
+                        {"type": "input_text", "text": prompt},
                         {
                             "type": "input_image",
                             "image_url": f"data:{mime_type};base64,{encoded_image}",

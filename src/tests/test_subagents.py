@@ -8,6 +8,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.agent.tools.delegate import delegate_handler, delegate_tool
 from app.agent.tools.send_message import send_message_handler, send_message_tool
+from app.config import Settings
+from app.container import build_audio_service, build_image_service, build_tool_registry
 from app.db.base import Base
 from app.db.models import AttachmentModel, AgentModel, ItemModel, SessionModel, UserModel
 from app.db.repositories.agent_repository import AgentRepository
@@ -77,6 +79,22 @@ class AgentTemplateLoaderTest(unittest.TestCase):
         self.assertEqual(template.model, "gpt-test")
         self.assertEqual(template.tool_names, ("send_message",))
         self.assertEqual(template.system_prompt, "Worker prompt.")
+
+    def test_repo_azazel_template_loads_with_registered_tools(self) -> None:
+        settings = Settings()
+        audio_service = build_audio_service(settings)
+        image_service = build_image_service(settings)
+        registry = build_tool_registry(settings, audio_service, image_service)
+        loader = AgentTemplateLoader(
+            templates_dir=Path(settings.AGENT_TEMPLATES_DIR),
+            tool_registry=registry,
+            default_model="gpt-test",
+        )
+
+        template = loader.load("azazel")
+
+        self.assertIn("download_file", template.tool_names)
+        self.assertIn("verify_task", template.tool_names)
 
 
 class AgentDomainTransitionTest(unittest.TestCase):

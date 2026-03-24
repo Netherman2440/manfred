@@ -9,5 +9,9 @@ class ImageService(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def analyze_image(self, path: str, prompt: str) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
     async def create_image(self, prompt: str) -> str:
         raise NotImplementedError
