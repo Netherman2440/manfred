@@ -123,6 +123,12 @@ class StubAgentRepository:
         return None
 
 
+class StubRunResult:
+    def __init__(self, agent: Agent) -> None:
+        self.agent = agent
+        self.error = None
+
+
 class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_chat_turn_builds_message_with_attachment_references_and_transcriptions(self) -> None:
         timestamp = datetime.now(UTC)
@@ -197,3 +203,127 @@ class ChatServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(attachment.workspace_path, chat_turn.user_item.content or "")
         self.assertEqual(chat_turn.attachments[0].item_id, chat_turn.user_item.id)
         self.assertEqual(chat_turn.attachments[0].agent_id, agent.id)
+
+    async def test_process_chat_returns_function_call_results_in_output(self) -> None:
+        timestamp = datetime.now(UTC)
+        user = User(id="user-123", name="Default User", api_key_hash=None, created_at=timestamp)
+        session = Session(
+            id="sess-123",
+            user_id=user.id,
+            root_agent_id="agent-123",
+            status=SessionStatus.ACTIVE,
+            summary=None,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        agent = Agent(
+            id="agent-123",
+            session_id=session.id,
+            root_agent_id="agent-123",
+            parent_id=None,
+            source_call_id=None,
+            depth=0,
+            status=AgentStatus.COMPLETED,
+            waiting_for=(),
+            result=None,
+            error=None,
+            turn_count=1,
+            config=AgentConfig(model="gpt-test", task="system prompt"),
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+
+        class ProcessItemRepository(StubItemRepository):
+            def get_last_sequence(self, agent_id: str) -> int:
+                del agent_id
+                return 1
+
+            def list_by_agent(self, agent_id: str) -> list[Item]:
+                del agent_id
+                return [
+                    Item(
+                        id="item-1",
+                        session_id=session.id,
+                        agent_id=agent.id,
+                        sequence=1,
+                        type=ItemType.MESSAGE,
+                        role=MessageRole.USER,
+                        content="Start",
+                        call_id=None,
+                        name=None,
+                        arguments_json=None,
+                        output=None,
+                        is_error=False,
+                        created_at=timestamp,
+                    ),
+                    Item(
+                        id="item-2",
+                        session_id=session.id,
+                        agent_id=agent.id,
+                        sequence=2,
+                        type=ItemType.FUNCTION_CALL,
+                        role=None,
+                        content=None,
+                        call_id="call-1",
+                        name="delegate",
+                        arguments_json='{"agent": "azazel"}',
+                        output=None,
+                        is_error=False,
+                        created_at=timestamp,
+                    ),
+                    Item(
+                        id="item-3",
+                        session_id=session.id,
+                        agent_id=agent.id,
+                        sequence=3,
+                        type=ItemType.FUNCTION_CALL_OUTPUT,
+                        role=None,
+                        content=None,
+                        call_id="call-1",
+                        name="delegate",
+                        arguments_json=None,
+                        output='"Child finished"',
+                        is_error=False,
+                        created_at=timestamp,
+                    ),
+                    Item(
+                        id="item-4",
+                        session_id=session.id,
+                        agent_id=agent.id,
+                        sequence=4,
+                        type=ItemType.MESSAGE,
+                        role=MessageRole.ASSISTANT,
+                        content="Done",
+                        call_id=None,
+                        name=None,
+                        arguments_json=None,
+                        output=None,
+                        is_error=False,
+                        created_at=timestamp,
+                    ),
+                ]
+
+        class ProcessAgentRunner(StubAgentRunner):
+            async def run_agent(self, agent_id: str) -> StubRunResult:
+                del agent_id
+                return StubRunResult(agent)
+
+        service = ChatService(
+            item_repository=ProcessItemRepository(),
+            agent_repository=StubAgentRepository(),
+            attachment_service=StubAttachmentService([]),
+            tool_registry=ToolRegistry(max_log_value_length=100),
+            agent_runner=ProcessAgentRunner(),
+            observability=ObservabilityService(),
+            chat_input_builder=ChatInputBuilder(),
+            conversation_context=StubConversationContextService(session=session, agent=agent, user=user),
+        )
+
+        response = await service.process_chat(ChatRequest(message="Run", session_id=session.id))
+
+        self.assertEqual(response.output[0]["type"], "function_call")
+        self.assertEqual(response.output[1]["type"], "function_call_output")
+        self.assertEqual(response.output[1]["callId"], "call-1")
+        self.assertEqual(response.output[1]["output"], "Child finished")
+        self.assertFalse(response.output[1]["isError"])
+        self.assertEqual(response.output[2]["type"], "text")

@@ -120,7 +120,17 @@ class StubChatApiService:
             agent_id="agent-123",
             model="gpt-test",
             status="completed",
-            output=[{"type": "text", "text": "OK"}],
+            output=[
+                {"type": "function_call", "callId": "call-1", "name": "delegate", "arguments": {"agent": "azazel"}},
+                {
+                    "type": "function_call_output",
+                    "callId": "call-1",
+                    "name": "delegate",
+                    "output": "Child finished",
+                    "isError": False,
+                },
+                {"type": "text", "text": "OK"},
+            ],
             attachments=[attachment],
             error=None,
         )
@@ -232,6 +242,9 @@ class ChatApiTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status, "completed")
         self.assertEqual(response.attachments[0].workspace_path, "input/sess-123/20260323_note.txt")
+        self.assertEqual(response.output[1].type, "function_call_output")
+        self.assertEqual(response.output[1].call_id, "call-1")
+        self.assertEqual(response.output[1].output, "Child finished")
 
     async def test_get_agent_endpoint_returns_state_payload(self) -> None:
         response = await get_agent(agent_id="agent-123", chat_service=StubChatApiService())

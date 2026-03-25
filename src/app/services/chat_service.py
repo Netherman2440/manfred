@@ -7,6 +7,7 @@ from app.domain import (
     AgentState,
     Attachment,
     ChatFunctionCallOutput,
+    ChatFunctionResultOutput,
     ChatOutputItem,
     ChatRequest,
     ChatResponse,
@@ -196,6 +197,17 @@ class ChatService:
                         arguments=self._parse_arguments(item.arguments_json),
                     )
                 )
+                continue
+
+            if item.type == ItemType.FUNCTION_CALL_OUTPUT and item.call_id and item.name and item.output is not None:
+                output.append(
+                    self._serialize_function_result_output(
+                        call_id=item.call_id,
+                        name=item.name,
+                        output=self._parse_output(item.output),
+                        is_error=item.is_error,
+                    )
+                )
 
         status = "failed" if error is not None or agent.status.value == "failed" else "completed"
         if agent.status.value == "waiting":
@@ -251,6 +263,22 @@ class ChatService:
         }
 
     @staticmethod
+    def _serialize_function_result_output(
+        *,
+        call_id: str,
+        name: str,
+        output: object,
+        is_error: bool,
+    ) -> ChatFunctionResultOutput:
+        return {
+            "type": "function_call_output",
+            "callId": call_id,
+            "name": name,
+            "output": output,
+            "isError": is_error,
+        }
+
+    @staticmethod
     def _parse_arguments(arguments_json: str | None) -> dict[str, object]:
         if arguments_json is None:
             return {}
@@ -263,6 +291,13 @@ class ChatService:
         if isinstance(parsed, dict):
             return parsed
         return {}
+
+    @staticmethod
+    def _parse_output(output_json: str) -> object:
+        try:
+            return json.loads(output_json)
+        except json.JSONDecodeError:
+            return output_json
 
     @staticmethod
     def _serialize_response_for_observability(response: ChatResponse) -> dict[str, object]:

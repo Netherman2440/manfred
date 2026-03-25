@@ -100,9 +100,13 @@ def _iter_entries(root: Path, *, max_depth: int) -> list[tuple[Path, str]]:
 
 async def fs_read_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
     del signal
-    path = validate_string_argument(args, "path", tool_name="fs_read", default=".")
-    if isinstance(path, dict):
-        return path
+    raw_path = args.get("path", ".")
+    if isinstance(raw_path, str) and raw_path.strip() == "":
+        path = "."
+    else:
+        path = validate_string_argument(args, "path", tool_name="fs_read", default=".")
+        if isinstance(path, dict):
+            return path
 
     lines = args.get("lines")
     if lines is not None and not isinstance(lines, str):

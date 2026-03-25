@@ -151,6 +151,10 @@ class OpenAIProvider:
         }
 
     def _parse_response(self, response_payload: dict[str, Any]) -> ProviderResponse:
+        response_model = response_payload.get("model")
+        if not isinstance(response_model, str):
+            response_model = None
+
         choices = response_payload.get("choices")
         if not isinstance(choices, list) or not choices:
             raise RuntimeError("Provider response does not contain choices.")
@@ -187,7 +191,7 @@ class OpenAIProvider:
                     )
                 )
 
-        return ProviderResponse(output=output)
+        return ProviderResponse(model=response_model, output=output)
 
     @staticmethod
     def _extract_text(content: Any) -> str:

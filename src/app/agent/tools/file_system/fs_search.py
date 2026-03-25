@@ -133,9 +133,13 @@ def _fuzzy_score(value: str, pattern: str, *, case_insensitive: bool) -> float:
 
 async def fs_search_handler(args: dict[str, Any], signal: object | None = None) -> dict[str, Any]:
     del signal
-    path = validate_string_argument(args, "path", tool_name="fs_search", default=".")
-    if isinstance(path, dict):
-        return path
+    raw_path = args.get("path", ".")
+    if isinstance(raw_path, str) and raw_path.strip() == "":
+        path = "."
+    else:
+        path = validate_string_argument(args, "path", tool_name="fs_search", default=".")
+        if isinstance(path, dict):
+            return path
     pattern = validate_string_argument(args, "pattern", tool_name="fs_search")
     if isinstance(pattern, dict):
         return pattern

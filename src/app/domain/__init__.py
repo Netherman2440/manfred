@@ -15,6 +15,7 @@ from app.domain.attachment import Attachment
 from app.domain.chat import (
     AgentState,
     ChatFunctionCallOutput,
+    ChatFunctionResultOutput,
     ChatOutputItem,
     ChatRequest,
     ChatResponse,
@@ -56,6 +57,7 @@ __all__ = [
     "AttachmentKind",
     "cancel_agent",
     "ChatFunctionCallOutput",
+    "ChatFunctionResultOutput",
     "ChatOutputItem",
     "ChatRequest",
     "ChatResponse",

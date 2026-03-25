@@ -39,7 +39,15 @@ class FunctionCallOutputItemPayload(BaseModel):
     arguments: dict[str, Any]
 
 
-OutputItemPayload = TextOutputItemPayload | FunctionCallOutputItemPayload
+class FunctionCallResultOutputItemPayload(BaseModel):
+    type: Literal["function_call_output"]
+    call_id: str = Field(..., alias="callId")
+    name: str
+    output: Any
+    is_error: bool = Field(..., alias="isError")
+
+
+OutputItemPayload = TextOutputItemPayload | FunctionCallOutputItemPayload | FunctionCallResultOutputItemPayload
 
 
 class AttachmentTranscriptionPayload(BaseModel):

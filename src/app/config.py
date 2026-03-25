@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     TOOL_LOG_MAX_LENGTH: int = 4000
     DATABASE_URL: str = "sqlite:///./manfred.db"
     AGENT_MAX_TURNS: int = 25
-    SUBAGENT_MAX_TURNS: int = 10
+    SUBAGENT_MAX_TURNS: int = 25
     MAX_AGENT_DEPTH: int = 5
     LLM_TIMEOUT_SECONDS: int = 120
     LLM_PROVIDER: str = "openrouter"

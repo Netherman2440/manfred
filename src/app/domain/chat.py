@@ -40,7 +40,15 @@ class ChatFunctionCallOutput(TypedDict):
     arguments: dict[str, Any]
 
 
-ChatOutputItem: TypeAlias = ChatTextOutput | ChatFunctionCallOutput
+class ChatFunctionResultOutput(TypedDict):
+    type: Literal["function_call_output"]
+    callId: str
+    name: str
+    output: Any
+    isError: bool
+
+
+ChatOutputItem: TypeAlias = ChatTextOutput | ChatFunctionCallOutput | ChatFunctionResultOutput
 
 
 @dataclass(slots=True, frozen=True)

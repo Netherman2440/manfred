@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -35,6 +36,9 @@ from app.domain import (
 from app.domain.provider import Provider
 from app.services.observability import ObservabilityService
 from app.workspaces import AgentTemplateLoader
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -200,6 +204,11 @@ class AgentRunner:
         ):
             try:
                 response = self._provider.generate(provider_input)
+                self._log_provider_response(
+                    agent_id=agent.id,
+                    requested_model=provider_input.model,
+                    response=response,
+                )
             except Exception as exc:
                 error_message = str(exc) or "Provider request failed."
                 self._observability.update_current_generation(
@@ -711,4 +720,15 @@ class AgentRunner:
                 }
             )
 
-        return {"output": output}
+        return {"model": response.model, "output": output}
+
+    @staticmethod
+    def _log_provider_response(*, agent_id: str, requested_model: str, response: ProviderResponse) -> None:
+        response_model = response.model or requested_model
+        logger.info(
+            "LLM response: agent_id=%s requested_model=%s response_model=%s output_count=%s",
+            agent_id,
+            requested_model,
+            response_model,
+            len(response.output),
+        )

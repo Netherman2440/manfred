@@ -64,6 +64,7 @@ ProviderOutputItem: TypeAlias = ProviderTextOutput | ProviderFunctionCall
 
 @dataclass(slots=True, frozen=True)
 class ProviderResponse:
+    model: str | None = None
     output: list[ProviderOutputItem] = field(default_factory=list)
 
 
