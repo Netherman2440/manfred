@@ -1,6 +1,7 @@
 from app.services.audio import AudioService, ElevenLabsAudioService
 from app.services.attachments import AttachmentService, AttachmentStorageService, ChatInputBuilder
 from app.services.images import ImageService, OpenAIImageService
+from app.services.session_history import SessionHistoryService
 
 __all__ = [
     "AudioService",
@@ -10,4 +11,5 @@ __all__ = [
     "ElevenLabsAudioService",
     "ImageService",
     "OpenAIImageService",
+    "SessionHistoryService",
 ]

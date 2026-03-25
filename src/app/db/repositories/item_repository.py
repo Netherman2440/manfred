@@ -68,6 +68,15 @@ class ItemRepository:
             ).all()
             return [self._to_domain(entity) for entity in entities]
 
+    def list_by_session(self, session_id: str) -> list[Item]:
+        with self._session_factory() as session:
+            entities = session.scalars(
+                select(ItemModel)
+                .where(ItemModel.session_id == session_id)
+                .order_by(ItemModel.created_at, ItemModel.sequence)
+            ).all()
+            return [self._to_domain(entity) for entity in entities]
+
     def get_last_sequence(self, agent_id: str) -> int:
         items = self.list_by_agent(agent_id)
         return items[-1].sequence if items else 0

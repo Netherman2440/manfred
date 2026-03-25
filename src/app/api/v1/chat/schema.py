@@ -2,7 +2,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.domain import Attachment, WaitingFor
+from app.domain import (
+    Attachment,
+    SessionDetailResponse as DomainSessionDetailResponse,
+    SessionHistoryAgentResponseEntry,
+    SessionHistoryMessageEntry,
+    SessionListItem as DomainSessionListItem,
+    WaitingFor,
+)
 from app.domain import ChatRequest as DomainChatRequest
 
 
@@ -146,6 +153,117 @@ class AgentStateResponse(BaseModel):
     waiting_for: list[WaitingForPayload] = Field(default_factory=list, alias="waitingFor")
     result: Any | None = None
     error: str | None = None
+
+
+class SessionListItemPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    root_agent_id: str | None = Field(default=None, alias="rootAgentId")
+    status: Literal["active", "archived"]
+    summary: str
+    created_at: str = Field(..., alias="createdAt")
+    updated_at: str = Field(..., alias="updatedAt")
+
+    @classmethod
+    def from_domain(cls, session: DomainSessionListItem) -> "SessionListItemPayload":
+        return cls(
+            id=session.id,
+            rootAgentId=session.root_agent_id,
+            status=session.status.value,
+            summary=session.summary,
+            createdAt=session.created_at.isoformat(),
+            updatedAt=session.updated_at.isoformat(),
+        )
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionListItemPayload]
+
+
+class SessionHistoryMessageEntryPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: Literal["message"]
+    item_id: str = Field(..., alias="itemId")
+    message: str
+    created_at: str = Field(..., alias="createdAt")
+    attachments: list[AttachmentPayload] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, entry: SessionHistoryMessageEntry) -> "SessionHistoryMessageEntryPayload":
+        return cls(
+            type=entry.type,
+            itemId=entry.item_id,
+            message=entry.message,
+            createdAt=entry.created_at.isoformat(),
+            attachments=[AttachmentPayload.from_domain(attachment) for attachment in entry.attachments],
+        )
+
+
+class SessionHistoryAgentResponseEntryPayload(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    type: Literal["agent_response"]
+    agent_id: str = Field(..., alias="agentId")
+    model: str
+    status: Literal["completed", "waiting", "failed"]
+    created_at: str = Field(..., alias="createdAt")
+    output: list[OutputItemPayload] = Field(default_factory=list)
+    waiting_for: list[WaitingForPayload] = Field(default_factory=list, alias="waitingFor")
+    attachments: list[AttachmentPayload] = Field(default_factory=list)
+    error: str | None = None
+
+    @classmethod
+    def from_domain(
+        cls,
+        entry: SessionHistoryAgentResponseEntry,
+    ) -> "SessionHistoryAgentResponseEntryPayload":
+        return cls(
+            type=entry.type,
+            agentId=entry.agent_id,
+            model=entry.model,
+            status=entry.status,
+            createdAt=entry.created_at.isoformat(),
+            output=entry.output,
+            waitingFor=[WaitingForPayload.from_domain(wait) for wait in entry.waiting_for],
+            attachments=[AttachmentPayload.from_domain(attachment) for attachment in entry.attachments],
+            error=entry.error,
+        )
+
+
+SessionHistoryEntryPayload = SessionHistoryMessageEntryPayload | SessionHistoryAgentResponseEntryPayload
+
+
+class SessionDetailResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(..., alias="sessionId")
+    root_agent_id: str | None = Field(default=None, alias="rootAgentId")
+    status: Literal["active", "archived"]
+    summary: str
+    created_at: str = Field(..., alias="createdAt")
+    updated_at: str = Field(..., alias="updatedAt")
+    entries: list[SessionHistoryEntryPayload] = Field(default_factory=list)
+
+    @classmethod
+    def from_domain(cls, session: DomainSessionDetailResponse) -> "SessionDetailResponse":
+        entries: list[SessionHistoryEntryPayload] = []
+        for entry in session.entries:
+            if isinstance(entry, SessionHistoryMessageEntry):
+                entries.append(SessionHistoryMessageEntryPayload.from_domain(entry))
+                continue
+            entries.append(SessionHistoryAgentResponseEntryPayload.from_domain(entry))
+
+        return cls(
+            sessionId=session.session_id,
+            rootAgentId=session.root_agent_id,
+            status=session.status.value,
+            summary=session.summary,
+            createdAt=session.created_at.isoformat(),
+            updatedAt=session.updated_at.isoformat(),
+            entries=entries,
+        )
 
 
 ChatResponse.model_rebuild()

@@ -23,6 +23,14 @@ from app.domain.chat import (
     ChatTurn,
 )
 from app.domain.item import Item
+from app.domain.session_history import (
+    SessionDetailResponse,
+    SessionHistoryAgentResponseEntry,
+    SessionHistoryEntry,
+    SessionHistoryMessageEntry,
+    SessionListItem,
+    SessionListResponse,
+)
 from app.domain.provider import (
     Provider,
     ProviderFunctionCall,
@@ -82,6 +90,12 @@ __all__ = [
     "ProviderResponse",
     "ProviderTextOutput",
     "Session",
+    "SessionDetailResponse",
+    "SessionHistoryAgentResponseEntry",
+    "SessionHistoryEntry",
+    "SessionHistoryMessageEntry",
+    "SessionListItem",
+    "SessionListResponse",
     "SessionStatus",
     "start_agent",
     "Tool",

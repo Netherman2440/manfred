@@ -77,6 +77,15 @@ class AttachmentRepository:
             ).all()
             return [self._to_domain(entity) for entity in entities]
 
+    def list_by_session(self, session_id: str) -> list[Attachment]:
+        with self._session_factory() as session:
+            entities = session.scalars(
+                select(AttachmentModel)
+                .where(AttachmentModel.session_id == session_id)
+                .order_by(AttachmentModel.created_at)
+            ).all()
+            return [self._to_domain(entity) for entity in entities]
+
     def update(self, attachment: Attachment) -> Attachment:
         with self._session_factory() as session:
             entity = session.get(AttachmentModel, attachment.id)

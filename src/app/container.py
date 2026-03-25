@@ -41,6 +41,7 @@ from app.services import (
 from app.services.conversation_context import ConversationContextService
 from app.services.chat_service import ChatService
 from app.services.observability import build_observability_service
+from app.services.session_history import SessionHistoryService
 from app.workspaces import AgentTemplateLoader
 
 
@@ -234,4 +235,11 @@ class Container(containers.DeclarativeContainer):
         observability=observability_service,
         chat_input_builder=chat_input_builder,
         conversation_context=conversation_context_service,
+    )
+    session_history_service = providers.Factory(
+        SessionHistoryService,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        attachment_repository=attachment_repository,
     )

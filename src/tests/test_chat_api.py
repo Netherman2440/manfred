@@ -5,17 +5,23 @@ from fastapi import HTTPException, Response
 from pydantic import ValidationError
 from starlette.datastructures import FormData, UploadFile
 
-from app.api.v1.chat.api import chat, deliver, get_agent, upload_attachments
+from app.api.v1.chat.api import chat, deliver, get_agent, get_session_detail, list_sessions, upload_attachments
 from app.api.v1.chat.schema import ChatRequest, DeliverRequest
 from app.domain import (
     AgentState,
     Attachment,
     AttachmentKind,
     ChatResponse,
+    SessionDetailResponse as DomainSessionDetailResponse,
+    SessionHistoryAgentResponseEntry,
+    SessionHistoryMessageEntry,
+    SessionListItem,
+    SessionListResponse as DomainSessionListResponse,
     Session,
     SessionStatus,
     TranscriptionStatus,
     User,
+    WaitingFor,
 )
 from app.services.attachments.storage import AttachmentValidationError
 
@@ -169,6 +175,68 @@ class StubChatApiService:
         )
 
 
+class StubSessionHistoryApiService:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.error = error
+
+    def list_sessions(self, user_id: str) -> DomainSessionListResponse:
+        del user_id
+        timestamp = datetime.now(UTC)
+        return DomainSessionListResponse(
+            sessions=[
+                SessionListItem(
+                    id="sess-123",
+                    root_agent_id="agent-123",
+                    status=SessionStatus.ACTIVE,
+                    summary="Popraw parser PDF",
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            ]
+        )
+
+    def get_session_detail(self, user_id: str, session_id: str) -> DomainSessionDetailResponse:
+        del user_id
+        if self.error is not None:
+            raise self.error
+
+        timestamp = datetime.now(UTC)
+        return DomainSessionDetailResponse(
+            session_id=session_id,
+            root_agent_id="agent-123",
+            status=SessionStatus.ACTIVE,
+            summary="Popraw parser PDF",
+            created_at=timestamp,
+            updated_at=timestamp,
+            entries=[
+                SessionHistoryMessageEntry(
+                    item_id="item-1",
+                    message="Hej",
+                    created_at=timestamp,
+                    attachments=[],
+                ),
+                SessionHistoryAgentResponseEntry(
+                    agent_id="agent-123",
+                    model="gpt-test",
+                    status="waiting",
+                    created_at=timestamp,
+                    output=[{"type": "text", "text": "Pracuje nad tym"}],
+                    waiting_for=[
+                        WaitingFor(
+                            call_id="call-1",
+                            type="agent",
+                            name="delegate",
+                            description="Waiting for child agent.",
+                            agent_id="agent-child",
+                        )
+                    ],
+                    attachments=[],
+                    error=None,
+                ),
+            ],
+        )
+
+
 class ChatApiTest(unittest.IsolatedAsyncioTestCase):
     async def test_upload_endpoint_returns_session_and_attachment_payload(self) -> None:
         file_upload = UploadFile(filename="voice-message.webm", file=None, headers={"content-type": "audio/webm"})
@@ -262,3 +330,38 @@ class ChatApiTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.agent_id, "agent-123")
         self.assertEqual(response.status, "completed")
+
+    async def test_list_sessions_endpoint_returns_session_list_payload(self) -> None:
+        response = await list_sessions(
+            session_history_service=StubSessionHistoryApiService(),
+            conversation_context=StubConversationContextService(),
+        )
+
+        self.assertEqual(response.sessions[0].id, "sess-123")
+        self.assertEqual(response.sessions[0].root_agent_id, "agent-123")
+        self.assertEqual(response.sessions[0].summary, "Popraw parser PDF")
+
+    async def test_get_session_detail_endpoint_returns_history_payload(self) -> None:
+        response = await get_session_detail(
+            session_id="sess-123",
+            session_history_service=StubSessionHistoryApiService(),
+            conversation_context=StubConversationContextService(),
+        )
+
+        self.assertEqual(response.session_id, "sess-123")
+        self.assertEqual(response.entries[0].type, "message")
+        self.assertEqual(response.entries[1].type, "agent_response")
+        self.assertEqual(response.entries[1].status, "waiting")
+        self.assertEqual(response.entries[1].waiting_for[0].call_id, "call-1")
+
+    async def test_get_session_detail_endpoint_returns_404_for_missing_session(self) -> None:
+        with self.assertRaises(HTTPException) as captured:
+            await get_session_detail(
+                session_id="sess-missing",
+                session_history_service=StubSessionHistoryApiService(
+                    error=LookupError("Session sess-missing does not exist.")
+                ),
+                conversation_context=StubConversationContextService(),
+            )
+
+        self.assertEqual(captured.exception.status_code, 404)

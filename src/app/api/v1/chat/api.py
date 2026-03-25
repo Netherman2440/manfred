@@ -9,6 +9,9 @@ from app.api.v1.chat.schema import (
     ChatRequest,
     ChatResponse,
     DeliverRequest,
+    SessionDetailResponse,
+    SessionListItemPayload,
+    SessionListResponse,
     WaitingForPayload,
 )
 from app.container import Container
@@ -16,6 +19,7 @@ from app.services.attachments import AttachmentService, AttachmentValidationErro
 from app.services.chat_service import ChatService
 from app.services.chat_service import ChatValidationError
 from app.services.conversation_context import ConversationContextService
+from app.services.session_history import SessionHistoryService
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -157,6 +161,33 @@ async def deliver(
         result=agent.result,
         error=agent.error,
     )
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+@inject
+async def list_sessions(
+    session_history_service: SessionHistoryService = Depends(Provide[Container.session_history_service]),
+    conversation_context: ConversationContextService = Depends(Provide[Container.conversation_context_service]),
+) -> SessionListResponse:
+    user = conversation_context.ensure_default_user()
+    response = session_history_service.list_sessions(user.id)
+    return SessionListResponse(sessions=[SessionListItemPayload.from_domain(session) for session in response.sessions])
+
+
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+@inject
+async def get_session_detail(
+    session_id: str,
+    session_history_service: SessionHistoryService = Depends(Provide[Container.session_history_service]),
+    conversation_context: ConversationContextService = Depends(Provide[Container.conversation_context_service]),
+) -> SessionDetailResponse:
+    user = conversation_context.ensure_default_user()
+    try:
+        response = session_history_service.get_session_detail(user.id, session_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    return SessionDetailResponse.from_domain(response)
 
 
 def _get_uploads_from_form(form: object) -> list[StarletteUploadFile]:
