@@ -25,7 +25,7 @@ class ItemModel(Base):
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String(32), nullable=False)
-    role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.agent.tools import calculator_tool
-from app.db.repositories import (
+from app.domain.agent import AgentConfig
+from app.domain.repositories import (
     AgentRepository,
     ItemRepository,
     SessionRepository,
     UserRepository,
 )
-from app.domain import AgentConfig, Tool, ToolRegistry
+from app.domain.tool import Tool, ToolRegistry
 from app.services import ChatService
 
 
