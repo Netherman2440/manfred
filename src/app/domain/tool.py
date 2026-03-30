@@ -27,13 +27,14 @@ ToolHandler: TypeAlias = Callable[[dict[str, Any], Any | None], Awaitable[ToolRe
 @dataclass(slots=True, frozen=True)
 class Tool:
     type: ToolType
-    definition: FunctionToolDefinition
+    definition: ToolDefinition
     handler: ToolHandler
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, tools: list[Tool]) -> None:
         self._tools: dict[str, Tool] = {}
+        for tool in tools: self.register(self, tool)
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.definition.name] = tool
@@ -41,11 +42,11 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
-    def list(self) -> list[FunctionToolDefinition]:
+    def list(self) -> list[ToolDefinition]:
         return [tool.definition for tool in self._tools.values()]
 
-    def list_by_name(self, names: Iterable[str]) -> list[FunctionToolDefinition]:
-        resolved: list[FunctionToolDefinition] = []
+    def list_by_name(self, names: Iterable[str]) -> list[ToolDefinition]:
+        resolved: list[ToolDefinition] = []
         for name in names:
             tool = self._tools.get(name)
             if tool is not None:

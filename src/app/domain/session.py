@@ -10,6 +10,6 @@ class Session:
     user_id: str
     root_agent_id: str | None
     status: SessionStatus
-    summary: str | None
+    title: str | None
     created_at: datetime
     updated_at: datetime

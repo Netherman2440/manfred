@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Optional
 
+from app.domain.tool import ToolDefinition
 from app.domain.types import AgentStatus
 
 
@@ -8,7 +10,8 @@ from app.domain.types import AgentStatus
 class AgentConfig:
     model: str
     task: str #system_prompt
-    tool_names: tuple[str, ...] = ()
+    tools: list[ToolDefinition] | None
+    temperature: float | None
 
 
 @dataclass(slots=True)

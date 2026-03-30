@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -21,7 +22,7 @@ class AgentModel(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     task: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_names: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     turn_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
