@@ -1,63 +1,60 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.db.models import ItemModel
 from app.domain.item import Item
-from app.domain.repositories.base import SqlAlchemyRepository
 from app.domain.types import ItemType, MessageRole
 
 
-class ItemRepository(SqlAlchemyRepository):
+class ItemRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
     def get(self, item_id: str) -> Item | None:
-        with self._session() as session:
-            model = session.get(ItemModel, item_id)
-            return None if model is None else self._to_domain(model)
+        model = self.session.get(ItemModel, item_id)
+        return None if model is None else self._to_domain(model)
 
     def list_by_session(self, session_id: str) -> list[Item]:
-        with self._session() as session:
-            models = session.scalars(
-                select(ItemModel)
-                .where(ItemModel.session_id == session_id)
-                .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
-            ).all()
-            return [self._to_domain(model) for model in models]
+        models = self.session.scalars(
+            select(ItemModel)
+            .where(ItemModel.session_id == session_id)
+            .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
 
     def list_by_agent(self, agent_id: str) -> list[Item]:
-        with self._session() as session:
-            models = session.scalars(
-                select(ItemModel)
-                .where(ItemModel.agent_id == agent_id)
-                .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
-            ).all()
-            return [self._to_domain(model) for model in models]
+        models = self.session.scalars(
+            select(ItemModel)
+            .where(ItemModel.agent_id == agent_id)
+            .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
 
     def save(self, item: Item) -> Item:
-        with self._session() as session:
-            model = session.get(ItemModel, item.id)
-            if model is None:
-                model = ItemModel(id=item.id)
+        model = self.session.get(ItemModel, item.id)
+        if model is None:
+            model = ItemModel(id=item.id)
 
-            if item.role is None:
-                raise ValueError("Item.role cannot be None")
+        if item.role is None:
+            raise ValueError("Item.role cannot be None")
 
-            model.session_id = item.session_id
-            model.agent_id = item.agent_id
-            model.sequence = item.sequence
-            model.type = item.type.value
-            model.role = item.role.value
-            model.content = item.content
-            model.call_id = item.call_id
-            model.name = item.name
-            model.arguments_json = item.arguments_json
-            model.output = item.output
-            model.is_error = item.is_error
-            model.created_at = item.created_at
+        model.session_id = item.session_id
+        model.agent_id = item.agent_id
+        model.sequence = item.sequence
+        model.type = item.type.value
+        model.role = item.role.value
+        model.content = item.content
+        model.call_id = item.call_id
+        model.name = item.name
+        model.arguments_json = item.arguments_json
+        model.output = item.output
+        model.is_error = item.is_error
+        model.created_at = item.created_at
 
-            session.add(model)
-            session.commit()
-            session.refresh(model)
-            return self._to_domain(model)
+        self.session.add(model)
+        return self._to_domain(model)
 
     @staticmethod
     def _to_domain(model: ItemModel) -> Item:

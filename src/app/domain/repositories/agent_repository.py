@@ -3,60 +3,57 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.db.models import AgentModel
 from app.domain.agent import Agent, AgentConfig
-from app.domain.repositories.base import SqlAlchemyRepository
 from app.domain.tool import FunctionToolDefinition, ToolDefinition, WebSearchToolDefinition
 from app.domain.types import AgentStatus
 
 
-class AgentRepository(SqlAlchemyRepository):
+class AgentRepository:
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
     def get(self, agent_id: str) -> Agent | None:
-        with self._session() as session:
-            model = session.get(AgentModel, agent_id)
-            return None if model is None else self._to_domain(model)
+        model = self.session.get(AgentModel, agent_id)
+        return None if model is None else self._to_domain(model)
 
     def list_by_session(self, session_id: str) -> list[Agent]:
-        with self._session() as session:
-            models = session.scalars(
-                select(AgentModel)
-                .where(AgentModel.session_id == session_id)
-                .order_by(AgentModel.created_at.asc())
-            ).all()
-            return [self._to_domain(model) for model in models]
+        models = self.session.scalars(
+            select(AgentModel)
+            .where(AgentModel.session_id == session_id)
+            .order_by(AgentModel.created_at.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
 
     def list_children(self, parent_id: str) -> list[Agent]:
-        with self._session() as session:
-            models = session.scalars(
-                select(AgentModel)
-                .where(AgentModel.parent_id == parent_id)
-                .order_by(AgentModel.created_at.asc())
-            ).all()
-            return [self._to_domain(model) for model in models]
+        models = self.session.scalars(
+            select(AgentModel)
+            .where(AgentModel.parent_id == parent_id)
+            .order_by(AgentModel.created_at.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
 
     def save(self, agent: Agent) -> Agent:
-        with self._session() as session:
-            model = session.get(AgentModel, agent.id)
-            if model is None:
-                model = AgentModel(id=agent.id)
+        model = self.session.get(AgentModel, agent.id)
+        if model is None:
+            model = AgentModel(id=agent.id)
 
-            model.session_id = agent.session_id
-            model.root_agent_id = agent.root_agent_id
-            model.parent_id = agent.parent_id
-            model.depth = agent.depth
-            model.status = agent.status.value
-            model.model = agent.config.model
-            model.task = agent.config.task
-            model.config = self._serialize_config(agent.config)
-            model.turn_count = agent.turn_count
-            model.created_at = agent.created_at
-            model.updated_at = agent.updated_at
+        model.session_id = agent.session_id
+        model.root_agent_id = agent.root_agent_id
+        model.parent_id = agent.parent_id
+        model.depth = agent.depth
+        model.status = agent.status.value
+        model.model = agent.config.model
+        model.task = agent.config.task
+        model.config = self._serialize_config(agent.config)
+        model.turn_count = agent.turn_count
+        model.created_at = agent.created_at
+        model.updated_at = agent.updated_at
 
-            session.add(model)
-            session.commit()
-            session.refresh(model)
-            return self._to_domain(model)
+        self.session.add(model)
+        return self._to_domain(model)
 
     def _to_domain(self, model: AgentModel) -> Agent:
         config_payload = model.config or {}
