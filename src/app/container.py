@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from collections.abc import Callable
 
 from dependency_injector import containers, providers
@@ -7,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 
-from app.domain import Tool, ToolRegistry
+from app.domain import Tool
 from app.domain.repositories import (
     AgentRepository,
     ItemRepository,
@@ -15,7 +17,10 @@ from app.domain.repositories import (
     UserRepository,
 )
 from app.providers import OpenRouterProvider, ProviderRegistry
+from app.services.agent_loader import AgentLoader
 from app.services.chat_service import ChatService
+from app.tools.definitions.calculator import calculator_tool
+from app.tools.registry import ToolRegistry
 
 
 def build_engine(database_url: str) -> Engine:
@@ -32,7 +37,7 @@ def build_db_session(session_factory: Callable[[], Session]) -> Session:
 
 
 def get_tools() -> list[Tool]:
-    return []
+    return [calculator_tool]
 
 
 def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
@@ -41,6 +46,10 @@ def build_provider_registry(openrouter_provider: OpenRouterProvider) -> Provider
             "openrouter": openrouter_provider,
         }
     )
+
+
+def get_repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 
@@ -77,10 +86,16 @@ class Container(containers.DeclarativeContainer):
         build_provider_registry,
         openrouter_provider=openrouter_provider,
     )
+    agent_loader = providers.Singleton(
+        AgentLoader,
+        tool_registry=tool_registry,
+        repo_root=providers.Callable(get_repo_root),
+    )
     chat_service = providers.Factory(
         ChatService,
         session=db_session,
         settings=settings,
         tool_registry=tool_registry,
         provider_registry=provider_registry,
+        agent_loader=agent_loader,
     )

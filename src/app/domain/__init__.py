@@ -1,7 +1,7 @@
 from app.domain.agent import Agent, AgentConfig
 from app.domain.item import Item
 from app.domain.session import Session
-from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, ToolRegistry, WebSearchToolDefinition
+from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, WebSearchToolDefinition
 from app.domain.types import AgentStatus, ItemType, MessageRole, SessionStatus
 from app.domain.user import User
 
@@ -17,7 +17,6 @@ __all__ = [
     "SessionStatus",
     "Tool",
     "ToolDefinition",
-    "ToolRegistry",
     "User",
     "WebSearchToolDefinition",
 ]

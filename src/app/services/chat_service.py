@@ -29,13 +29,14 @@ from app.domain import (
     Session,
     SessionStatus,
     ToolDefinition,
-    ToolRegistry,
     User,
     WebSearchToolDefinition,
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.providers import ProviderRegistry
 from app.runtime.runner import Runner
+from app.services.agent_loader import AgentLoader
+from app.tools.registry import ToolRegistry
 
 
 class ChatServiceValidationError(ValueError):
@@ -72,11 +73,13 @@ class ChatService:
         settings: Settings,
         tool_registry: ToolRegistry,
         provider_registry: ProviderRegistry,
+        agent_loader: AgentLoader,
     ) -> None:
         self.session = session
         self.settings = settings
         self.tool_registry = tool_registry
         self.provider_registry = provider_registry
+        self.agent_loader = agent_loader
         self.user_repository = UserRepository(session)
         self.session_repository = SessionRepository(session)
         self.agent_repository = AgentRepository(session)
@@ -182,11 +185,13 @@ class ChatService:
             raise ChatServiceValidationError(f"Session not found: {session_id}")
         return session
 
-    def _resolve_agent_config(self, request_config: ChatAgentConfigInput | None) -> ResolvedAgentConfig: #TODO: resolve frob base agent.md
+    def _resolve_agent_config(self, request_config: ChatAgentConfigInput | None) -> ResolvedAgentConfig:
+        loaded_agent = self.agent_loader.load_agent(self.settings.DEFAULT_AGENT)
+        default_model = f"openrouter:{self.settings.OPEN_ROUTER_LLM_MODEL}"
         base_config = ResolvedAgentConfig(
-            model=f"openrouter:{self.settings.OPEN_ROUTER_LLM_MODEL}",
-            task="You are Manfred, a helpful assistant.",
-            tools=list(self.tool_registry.list()),
+            model=loaded_agent.model or default_model,
+            task=loaded_agent.system_prompt or "You are Manfred, a helpful assistant.",
+            tools=list(loaded_agent.tools),
             temperature=None,
         )
         if request_config is None:

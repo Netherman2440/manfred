@@ -6,7 +6,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.db.base import utcnow
-from app.domain import Agent, AgentStatus, Item, ItemType, MessageRole, Session, ToolRegistry
+from app.domain import Agent, AgentStatus, Item, ItemType, MessageRole, Session
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
 from app.providers import (
     ProviderFunctionCallInputItem,
@@ -18,6 +18,7 @@ from app.providers import (
     ProviderResponse,
     ProviderTextOutputItem,
 )
+from app.tools.registry import ToolRegistry
 
 
 @dataclass(slots=True)

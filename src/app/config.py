@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     API_RELOAD: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
 
-    DEFAULT_AGENT_NAME: str = "manfred"
+    DEFAULT_AGENT: str = ".agent_data/agents/manfred.agent.md"
+    WORKSPACE_PATH: str = ".agent_data"
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""
