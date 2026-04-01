@@ -34,10 +34,14 @@ class Tool:
 class ToolRegistry:
     def __init__(self, tools: list[Tool]) -> None:
         self._tools: dict[str, Tool] = {}
-        for tool in tools: self.register(self, tool)
+        for tool in tools:
+            self.register(tool)
 
     def register(self, tool: Tool) -> None:
-        self._tools[tool.definition.name] = tool
+        name = getattr(tool.definition, "name", None)
+        if not name:
+            raise ValueError("Tool definition must expose a name")
+        self._tools[name] = tool
 
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
@@ -60,5 +64,5 @@ class ToolRegistry:
 
         try:
             return await tool.handler(args, signal)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return {"ok": False, "error": str(exc) or "Tool execution failed"}

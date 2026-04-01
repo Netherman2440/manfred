@@ -17,9 +17,7 @@ class Settings(BaseSettings):
     API_RELOAD: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
 
-#agent config
-    SYSTEM_PROMPT_PATH: str = "app/prompts/system_prompt.md"
-# optional temperature etc
+    DEFAULT_AGENT_NAME: str = "manfred"
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""

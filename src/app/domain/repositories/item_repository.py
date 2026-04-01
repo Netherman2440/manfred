@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,6 +33,21 @@ class ItemRepository:
         ).all()
         return [self._to_domain(model) for model in models]
 
+    def list_by_agent_after_sequence(self, agent_id: str, sequence: int) -> list[Item]:
+        models = self.session.scalars(
+            select(ItemModel)
+            .where(ItemModel.agent_id == agent_id, ItemModel.sequence > sequence)
+            .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
+
+    def get_last_sequence(self, agent_id: str) -> int:
+        value = self.session.scalar(
+            select(func.max(ItemModel.sequence))
+            .where(ItemModel.agent_id == agent_id)
+        )
+        return 0 if value is None else int(value)
+
     def save(self, item: Item) -> Item:
         model = self.session.get(ItemModel, item.id)
         if model is None:
@@ -54,6 +70,7 @@ class ItemRepository:
         model.created_at = item.created_at
 
         self.session.add(model)
+        self.session.flush()
         return self._to_domain(model)
 
     @staticmethod

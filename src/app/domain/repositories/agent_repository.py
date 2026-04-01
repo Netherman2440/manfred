@@ -53,6 +53,7 @@ class AgentRepository:
         model.updated_at = agent.updated_at
 
         self.session.add(model)
+        self.session.flush()
         return self._to_domain(model)
 
     def _to_domain(self, model: AgentModel) -> Agent:

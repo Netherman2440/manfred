@@ -29,6 +29,7 @@ class UserRepository:
         model.created_at = user.created_at
 
         self.session.add(model)
+        self.session.flush()
         return self._to_domain(model)
 
     @staticmethod

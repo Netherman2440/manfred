@@ -37,6 +37,7 @@ class SessionRepository:
         model.updated_at = domain_session.updated_at
 
         self.session.add(model)
+        self.session.flush()
         return self._to_domain(model)
 
     @staticmethod
