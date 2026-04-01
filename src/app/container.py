@@ -7,13 +7,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 
-from app.domain import AgentConfig, Tool, ToolRegistry
+from app.domain import Tool, ToolRegistry
 from app.domain.repositories import (
     AgentRepository,
     ItemRepository,
     SessionRepository,
     UserRepository,
 )
+from app.providers import OpenRouterProvider, ProviderRegistry
+from app.services.chat_service import ChatService
 
 
 def build_engine(database_url: str) -> Engine:
@@ -33,6 +35,14 @@ def get_tools() -> list[Tool]:
     return []
 
 
+def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
+    return ProviderRegistry(
+        providers={
+            "openrouter": openrouter_provider,
+        }
+    )
+
+
 
 class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
@@ -48,13 +58,29 @@ class Container(containers.DeclarativeContainer):
     session_factory = providers.Singleton(build_session_factory, engine=db_engine)
     db_session = providers.Factory(build_db_session, session_factory=session_factory)
 
-    user_repository = providers.Factory(UserRepository)
-    session_repository = providers.Factory(SessionRepository)
-    agent_repository = providers.Factory(AgentRepository)
-    item_repository = providers.Factory(ItemRepository)
+    user_repository = providers.Factory(UserRepository, session=db_session)
+    session_repository = providers.Factory(SessionRepository, session=db_session)
+    agent_repository = providers.Factory(AgentRepository, session=db_session)
+    item_repository = providers.Factory(ItemRepository, session=db_session)
 
     tool_registry = providers.Singleton(
         ToolRegistry,
-        get_tools
+        tools=providers.Callable(get_tools),
     )
-    
+
+    openrouter_provider = providers.Singleton(
+        OpenRouterProvider,
+        base_url=settings.provided.OPEN_ROUTER_URL,
+        api_key=settings.provided.OPEN_ROUTER_API_KEY,
+    )
+    provider_registry = providers.Singleton(
+        build_provider_registry,
+        openrouter_provider=openrouter_provider,
+    )
+    chat_service = providers.Factory(
+        ChatService,
+        session=db_session,
+        settings=settings,
+        tool_registry=tool_registry,
+        provider_registry=provider_registry,
+    )

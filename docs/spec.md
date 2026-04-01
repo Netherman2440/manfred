@@ -18,8 +18,8 @@ Statusy używane w planie: `todo`, `in progress`, `done`.
    request ma przyjmować tylko `message` oraz opcjonalne `sessionId`; gdy `sessionId` nie zostanie podane, endpoint tworzy nową sesję.
 7. `done` Przygotować składanie kontekstu wejściowego agenta w `chat_service.py` bez uruchamiania pętli wykonania:
    utworzyć `PreparedChat`, ładować `agent config` z kontenera, wyznaczać `tools` na podstawie konfiguracji agenta, budować `agent input` tak, aby system prompt nie trafiał do sesji, trzymać `task` w konfiguracji agenta i na razie ładować samą sesję bez itemów.
-8. `todo` Kolejny krok:
-   zaimplementować pętlę wykonywania agenta; rozpisanie tej pętli i jej implementacja są celowo odłożone do następnego etapu prac.
+8. `in progress` Kolejny krok został rozbity na dwa etapy:
+   szczegółowy plan etapu `api + chat_service` jest w `docs/chat_service_plan.md`, a plan pętli wykonywania agenta w `runner.py` jest w `docs/runner_plan.md`.
 
 ## Cel dokumentu
 
