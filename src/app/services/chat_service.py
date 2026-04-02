@@ -12,6 +12,7 @@ from app.api.v1.chat.schema import (
     ChatRequest,
     ChatResponse,
     FunctionCallOutputItem,
+    FunctionCallResultOutputItem,
     FunctionToolDefinitionInput,
     TextOutputItem,
     WebSearchToolDefinitionInput,
@@ -99,7 +100,11 @@ class ChatService:
                 raise ChatServiceValidationError(setup.error or "Chat setup failed.")
 
             self.session.flush()
-            response = await self.execute_chat(setup.value.agent.id, setup.value.last_sequence)
+            response = await self.execute_chat(
+                setup.value.agent.id,
+                setup.value.last_sequence,
+                include_tool_result=chat_request.include_tool_result,
+            )
             self.session.commit()
             return response
         except ChatServiceValidationError:
@@ -132,14 +137,23 @@ class ChatService:
             ),
         )
 
-    async def execute_chat(self, agent_id: str, last_sequence: int) -> ChatResponse:
+    async def execute_chat(
+        self,
+        agent_id: str,
+        last_sequence: int,
+        *,
+        include_tool_result: bool = False,
+    ) -> ChatResponse:
         result = await self.runner.run_agent(agent_id)
         agent = result.agent or self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent disappeared during execution: {agent_id}")
 
         response_items = self.item_repository.list_by_agent_after_sequence(agent_id, last_sequence)
-        output = self._build_response_output(response_items)
+        output = self._build_response_output(
+            response_items,
+            include_tool_result=include_tool_result,
+        )
 
         return ChatResponse(
             id=agent.id,
@@ -294,8 +308,12 @@ class ChatService:
             self.item_repository.save(item)
 
     @staticmethod
-    def _build_response_output(items: list[Item]) -> list[TextOutputItem | FunctionCallOutputItem]:
-        output: list[TextOutputItem | FunctionCallOutputItem] = []
+    def _build_response_output(
+        items: list[Item],
+        *,
+        include_tool_result: bool = False,
+    ) -> list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem]:
+        output: list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem] = []
 
         for item in items:
             if item.type == ItemType.MESSAGE and item.role == MessageRole.ASSISTANT and item.content:
@@ -308,6 +326,17 @@ class ChatService:
                         call_id=item.call_id or "",
                         name=item.name or "",
                         arguments=ChatService._deserialize_arguments(item.arguments_json),
+                    )
+                )
+                continue
+
+            if include_tool_result and item.type == ItemType.FUNCTION_CALL_OUTPUT:
+                output.append(
+                    FunctionCallResultOutputItem(
+                        call_id=item.call_id or "",
+                        name=item.name or "",
+                        output=item.output,
+                        is_error=item.is_error,
                     )
                 )
 

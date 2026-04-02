@@ -42,6 +42,7 @@ class ChatRequest(BaseModel):
     input: list[ChatInputItem] = Field(default_factory=list)
     session_id: str | None = None
     stream: bool = False
+    include_tool_result: bool = False
     agent_config: ChatAgentConfigInput | None = None
 
 
@@ -57,8 +58,16 @@ class FunctionCallOutputItem(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class FunctionCallResultOutputItem(BaseModel):
+    type: Literal["function_call_output"] = "function_call_output"
+    call_id: str
+    name: str
+    output: str | None = None
+    is_error: bool = False
+
+
 ChatOutputItem = Annotated[
-    TextOutputItem | FunctionCallOutputItem,
+    TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem,
     Field(discriminator="type"),
 ]
 
@@ -70,4 +79,3 @@ class ChatResponse(BaseModel):
     model: str
     output: list[ChatOutputItem] = Field(default_factory=list)
     error: str | None = None
-
