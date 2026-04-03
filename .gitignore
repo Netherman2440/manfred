@@ -3,4 +3,5 @@ __pycache__/
 *.py[cod]
 *.env
 *.db
-.agent_data/
+.agent_data/workspaces
+.idea/*

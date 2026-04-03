@@ -1,6 +1,5 @@
-from pathlib import Path
-
 from collections.abc import Callable
+from pathlib import Path
 
 from dependency_injector import containers, providers
 from sqlalchemy import create_engine
@@ -8,15 +7,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
-
 from app.domain import Tool
-from app.domain.repositories import (
-    AgentRepository,
-    ItemRepository,
-    SessionRepository,
-    UserRepository,
-)
+from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
+from app.events import EventBus
+from app.observability import build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
+from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
 from app.services.chat_service import ChatService
 from app.tools.definitions.calculator import calculator_tool
@@ -41,16 +37,59 @@ def get_tools() -> list[Tool]:
 
 
 def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
-    return ProviderRegistry(
-        providers={
-            "openrouter": openrouter_provider,
-        }
-    )
+    return ProviderRegistry(providers={"openrouter": openrouter_provider})
 
 
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
+
+def build_runner(
+    *,
+    session: Session,
+    tool_registry: ToolRegistry,
+    provider_registry: ProviderRegistry,
+    event_bus: EventBus,
+) -> Runner:
+    return Runner(
+        agent_repository=AgentRepository(session),
+        session_repository=SessionRepository(session),
+        item_repository=ItemRepository(session),
+        tool_registry=tool_registry,
+        provider_registry=provider_registry,
+        event_bus=event_bus,
+    )
+
+
+def build_chat_service(
+    *,
+    session: Session,
+    settings: Settings,
+    agent_loader: AgentLoader,
+    tool_registry: ToolRegistry,
+    provider_registry: ProviderRegistry,
+    event_bus: EventBus,
+) -> ChatService:
+    user_repository = UserRepository(session)
+    session_repository = SessionRepository(session)
+    agent_repository = AgentRepository(session)
+    item_repository = ItemRepository(session)
+
+    return ChatService(
+        session=session,
+        settings=settings,
+        agent_loader=agent_loader,
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        runner=build_runner(
+            session=session,
+            tool_registry=tool_registry,
+            provider_registry=provider_registry,
+            event_bus=event_bus,
+        ),
+    )
 
 
 class Container(containers.DeclarativeContainer):
@@ -60,21 +99,21 @@ class Container(containers.DeclarativeContainer):
             "app.api.v1",
             "app.api.v1.chat",
         ],
-        )
+    )
 
     settings = providers.Singleton(Settings)
     db_engine = providers.Singleton(build_engine, database_url=settings.provided.DATABASE_URL)
     session_factory = providers.Singleton(build_session_factory, engine=db_engine)
     db_session = providers.Factory(build_db_session, session_factory=session_factory)
 
-    user_repository = providers.Factory(UserRepository, session=db_session)
-    session_repository = providers.Factory(SessionRepository, session=db_session)
-    agent_repository = providers.Factory(AgentRepository, session=db_session)
-    item_repository = providers.Factory(ItemRepository, session=db_session)
-
     tool_registry = providers.Singleton(
         ToolRegistry,
         tools=providers.Callable(get_tools),
+    )
+    event_bus = providers.Singleton(EventBus)
+    langfuse_subscriber = providers.Singleton(
+        build_langfuse_subscriber,
+        settings=settings,
     )
 
     openrouter_provider = providers.Singleton(
@@ -91,11 +130,13 @@ class Container(containers.DeclarativeContainer):
         tool_registry=tool_registry,
         repo_root=providers.Callable(get_repo_root),
     )
+
     chat_service = providers.Factory(
-        ChatService,
+        build_chat_service,
         session=db_session,
         settings=settings,
+        agent_loader=agent_loader,
         tool_registry=tool_registry,
         provider_registry=provider_registry,
-        agent_loader=agent_loader,
+        event_bus=event_bus,
     )

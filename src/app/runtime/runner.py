@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
 from app.db.base import utcnow
 from app.domain import Agent, AgentStatus, Item, ItemType, MessageRole, Session
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
+from app.events import (
+    AgentCompletedEvent,
+    AgentFailedEvent,
+    AgentStartedEvent,
+    EventBus,
+    GenerationCompletedEvent,
+    ToolCalledEvent,
+    ToolCompletedEvent,
+    ToolFailedEvent,
+    TurnCompletedEvent,
+    TurnStartedEvent,
+    build_event_context,
+)
 from app.providers import (
     ProviderFunctionCallInputItem,
     ProviderFunctionCallOutputInputItem,
@@ -17,6 +31,7 @@ from app.providers import (
     ProviderRequest,
     ProviderResponse,
     ProviderTextOutputItem,
+    ProviderUsage,
 )
 from app.tools.registry import ToolRegistry
 
@@ -26,6 +41,8 @@ class AgentRunContext:
     agent: Agent
     session: Session
     items: list[Item]
+    trace_id: str
+    last_agent_sequence: int
 
 
 @dataclass(slots=True)
@@ -33,6 +50,7 @@ class TurnResult:
     status: Literal["continue", "completed", "failed"]
     agent: Agent
     error: str | None = None
+    usage: ProviderUsage | None = None
 
 
 @dataclass(slots=True)
@@ -52,56 +70,107 @@ class Runner:
         item_repository: ItemRepository,
         tool_registry: ToolRegistry,
         provider_registry: ProviderRegistry,
+        event_bus: EventBus,
     ) -> None:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
         self.item_repository = item_repository
         self.tool_registry = tool_registry
         self.provider_registry = provider_registry
+        self.event_bus = event_bus
 
-    async def run_agent(self, agent_id: str, *, max_turns: int = 10) -> RunResult:
-        context = self.load_agent_context(agent_id)
+    async def run_agent(
+        self,
+        agent_id: str,
+        *,
+        max_turns: int = 10,
+        last_agent_sequence: int = 0,
+    ) -> RunResult:
+        context = self.load_agent_context(
+            agent_id,
+            trace_id=uuid4().hex,
+            last_agent_sequence=last_agent_sequence,
+        )
         if context.agent.status == AgentStatus.WAITING:
-            return RunResult(ok=False, status="failed", error="Waiting agents are not implemented yet.")
+            return RunResult(
+                ok=False,
+                status="failed",
+                agent=context.agent,
+                error="Waiting agents are not implemented yet.",
+            )
 
         context.agent.status = AgentStatus.RUNNING
         context.agent.updated_at = utcnow()
-        self.agent_repository.save(context.agent)
+        context.agent = self.agent_repository.save(context.agent)
+        run_started_at = utcnow()
+        total_usage = ProviderUsage()
+
+        self.event_bus.emit(
+            AgentStartedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                model=context.agent.config.model,
+                task=context.agent.config.task,
+                agent_name=context.agent.agent_name,
+                user_id=context.session.user_id,
+                user_input=self._find_run_user_input(context),
+            )
+        )
 
         turns_executed = 0
 
         while context.agent.status == AgentStatus.RUNNING:
             if turns_executed >= max_turns:
-                context.agent.status = AgentStatus.FAILED
-                context.agent.updated_at = utcnow()
-                self.agent_repository.save(context.agent)
-                return RunResult(ok=False, status="failed", agent=context.agent, error="Agent exceeded max_turns.")
+                return self._fail_run(
+                    context,
+                    error="Agent exceeded max_turns.",
+                )
+
+            self.event_bus.emit(
+                TurnStartedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    turn_count=context.agent.turn_count,
+                )
+            )
 
             turn = await self.execute_turn(context)
             context.agent = turn.agent
+            total_usage = self._add_usage(total_usage, turn.usage)
+
+            if turn.status != "failed":
+                self.event_bus.emit(
+                    TurnCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        turn_count=context.agent.turn_count,
+                        usage=turn.usage,
+                    )
+                )
+
             context.agent.turn_count += 1
             context.agent.updated_at = utcnow()
-            self.agent_repository.save(context.agent)
+            context.agent = self.agent_repository.save(context.agent)
             turns_executed += 1
 
             if turn.status == "continue":
-                context = self.reload_context(context.agent.id)
+                context = self.reload_context(context)
                 continue
 
             if turn.status == "completed":
+                self.event_bus.emit(
+                    AgentCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        duration_ms=self._duration_ms(run_started_at),
+                        usage=total_usage,
+                        result=self._find_run_result(context),
+                    )
+                )
                 return RunResult(ok=True, status="completed", agent=context.agent)
 
-            context.agent.status = AgentStatus.FAILED
-            context.agent.updated_at = utcnow()
-            self.agent_repository.save(context.agent)
-            return RunResult(
-                ok=False,
-                status="failed",
-                agent=context.agent,
+            return self._fail_run(
+                context,
                 error=turn.error or "Agent execution failed.",
             )
 
-        return RunResult(ok=False, status="failed", agent=context.agent, error="Agent stopped unexpectedly.")
+        return self._fail_run(context, error="Agent stopped unexpectedly.")
 
     async def execute_turn(self, context: AgentRunContext) -> TurnResult:
         resolved = self.provider_registry.resolve(context.agent.config.model)
@@ -112,18 +181,34 @@ class Runner:
                 error=f"Unknown provider or model reference: {context.agent.config.model}",
             )
 
+        request_input = self.map_items_to_provider_input(context.items)
         request = ProviderRequest(
             model=resolved.model,
             instructions=context.agent.config.task,
-            input=self.map_items_to_provider_input(context.items),
+            input=request_input,
             tools=context.agent.config.tools or [],
             temperature=context.agent.config.temperature,
         )
+        generation_started_at = utcnow()
+        generation_timer_started_at = perf_counter()
 
         try:
             response = await resolved.provider.generate(request)
-        except Exception as exc: 
+        except Exception as exc:
             return TurnResult(status="failed", agent=context.agent, error=str(exc) or "Provider call failed.")
+
+        self.event_bus.emit(
+            GenerationCompletedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                model=resolved.model,
+                instructions=request.instructions,
+                input=request_input,
+                output=response.output,
+                usage=response.usage,
+                duration_ms=self._duration_ms(generation_started_at, generation_timer_started_at),
+                start_time=generation_started_at,
+            )
+        )
 
         return await self.handle_turn_response(context, response)
 
@@ -132,7 +217,7 @@ class Runner:
         context: AgentRunContext,
         response: ProviderResponse,
     ) -> TurnResult:
-        self.store_provider_output(context.agent, context.session, response)
+        context.items.extend(self.store_provider_output(context.agent, context.session, response))
 
         function_calls = [
             output_item
@@ -140,32 +225,69 @@ class Runner:
             if isinstance(output_item, ProviderFunctionCallOutputItem)
         ]
 
-        if not function_calls: #TODO what with reasoning?
+        if not function_calls:  # TODO: support reasoning items when provider exposes them
             context.agent.status = AgentStatus.COMPLETED
-            return TurnResult(status="completed", agent=context.agent)
+            return TurnResult(status="completed", agent=context.agent, usage=response.usage)
 
         for function_call in function_calls:
+            self.event_bus.emit(
+                ToolCalledEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                )
+            )
+
+            tool_started_at = utcnow()
+            tool_timer_started_at = perf_counter()
             tool = self.tool_registry.get(function_call.name)
             if tool is None:
-                self.store_tool_output(
+                error_message = f"Tool not found: {function_call.name}"
+                tool_output = self.store_tool_output(
                     context.agent,
                     context.session,
                     call_id=function_call.call_id,
                     name=function_call.name,
-                    result={"ok": False, "error": f"Tool not found: {function_call.name}"},
+                    result={"ok": False, "error": error_message},
                     is_error=True,
+                )
+                context.items.append(tool_output)
+                self.event_bus.emit(
+                    ToolFailedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        arguments=function_call.arguments,
+                        error=error_message,
+                        duration_ms=self._duration_ms(tool_started_at, tool_timer_started_at),
+                        start_time=tool_started_at,
+                    )
                 )
                 continue
 
             if tool.type != "sync":
+                error_message = f"Tool type '{tool.type}' is not implemented yet."
+                self.event_bus.emit(
+                    ToolFailedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        arguments=function_call.arguments,
+                        error=error_message,
+                        duration_ms=self._duration_ms(tool_started_at, tool_timer_started_at),
+                        start_time=tool_started_at,
+                    )
+                )
                 return TurnResult(
                     status="failed",
                     agent=context.agent,
-                    error=f"Tool type '{tool.type}' is not implemented yet.",
+                    error=error_message,
+                    usage=response.usage,
                 )
 
             result = await self.tool_registry.execute(function_call.name, function_call.arguments)
-            self.store_tool_output(
+            tool_output = self.store_tool_output(
                 context.agent,
                 context.session,
                 call_id=function_call.call_id,
@@ -173,10 +295,44 @@ class Runner:
                 result=result,
                 is_error=not bool(result.get("ok")),
             )
+            context.items.append(tool_output)
 
-        return TurnResult(status="continue", agent=context.agent)
+            duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+            if bool(result.get("ok")):
+                self.event_bus.emit(
+                    ToolCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        arguments=function_call.arguments,
+                        output=dict(result),
+                        duration_ms=duration_ms,
+                        start_time=tool_started_at,
+                    )
+                )
+                continue
 
-    def load_agent_context(self, agent_id: str) -> AgentRunContext:
+            self.event_bus.emit(
+                ToolFailedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    error=str(result.get("error") or "Tool execution failed."),
+                    duration_ms=duration_ms,
+                    start_time=tool_started_at,
+                )
+            )
+
+        return TurnResult(status="continue", agent=context.agent, usage=response.usage)
+
+    def load_agent_context(
+        self,
+        agent_id: str,
+        *,
+        trace_id: str,
+        last_agent_sequence: int,
+    ) -> AgentRunContext:
         agent = self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent not found: {agent_id}")
@@ -186,10 +342,20 @@ class Runner:
             raise RuntimeError(f"Session not found for agent: {agent_id}")
 
         items = self.item_repository.list_by_agent(agent.id)
-        return AgentRunContext(agent=agent, session=session, items=items)
+        return AgentRunContext(
+            agent=agent,
+            session=session,
+            items=items,
+            trace_id=trace_id,
+            last_agent_sequence=last_agent_sequence,
+        )
 
-    def reload_context(self, agent_id: str) -> AgentRunContext:
-        return self.load_agent_context(agent_id)
+    def reload_context(self, context: AgentRunContext) -> AgentRunContext:
+        return self.load_agent_context(
+            context.agent.id,
+            trace_id=context.trace_id,
+            last_agent_sequence=context.last_agent_sequence,
+        )
 
     @staticmethod
     def map_items_to_provider_input(items: list[Item]) -> list[
@@ -325,3 +491,57 @@ class Runner:
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def _fail_run(self, context: AgentRunContext, *, error: str) -> RunResult:
+        context.agent.status = AgentStatus.FAILED
+        context.agent.updated_at = utcnow()
+        context.agent = self.agent_repository.save(context.agent)
+        self.event_bus.emit(
+            AgentFailedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                error=error,
+            )
+        )
+        return RunResult(
+            ok=False,
+            status="failed",
+            agent=context.agent,
+            error=error,
+        )
+
+    @staticmethod
+    def _add_usage(total: ProviderUsage, usage: ProviderUsage | None) -> ProviderUsage:
+        if usage is None:
+            return total
+        return ProviderUsage(
+            input_tokens=total.input_tokens + usage.input_tokens,
+            output_tokens=total.output_tokens + usage.output_tokens,
+            total_tokens=total.total_tokens + usage.total_tokens,
+            cached_tokens=total.cached_tokens + usage.cached_tokens,
+        )
+
+    @staticmethod
+    def _duration_ms(started_at: object, monotonic_started_at: float | None = None) -> int:
+        if monotonic_started_at is not None:
+            return max(0, int((perf_counter() - monotonic_started_at) * 1000))
+        return max(0, int((utcnow() - started_at).total_seconds() * 1000))
+
+    @staticmethod
+    def _find_run_user_input(context: AgentRunContext) -> str | None:
+        user_input: str | None = None
+        for item in context.items:
+            if item.sequence <= context.last_agent_sequence:
+                continue
+            if item.type == ItemType.MESSAGE and item.role == MessageRole.USER and item.content:
+                user_input = item.content
+        return user_input
+
+    @staticmethod
+    def _find_run_result(context: AgentRunContext) -> str | None:
+        result: str | None = None
+        for item in context.items:
+            if item.sequence <= context.last_agent_sequence:
+                continue
+            if item.type == ItemType.MESSAGE and item.role == MessageRole.ASSISTANT and item.content:
+                result = item.content
+        return result

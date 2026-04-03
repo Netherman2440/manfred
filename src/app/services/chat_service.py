@@ -12,6 +12,7 @@ from app.api.v1.chat.schema import (
     ChatRequest,
     ChatResponse,
     FunctionCallOutputItem,
+    FunctionCallResultOutputItem,
     FunctionToolDefinitionInput,
     TextOutputItem,
     WebSearchToolDefinitionInput,
@@ -33,10 +34,8 @@ from app.domain import (
     WebSearchToolDefinition,
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
-from app.providers import ProviderRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
-from app.tools.registry import ToolRegistry
 
 
 class ChatServiceValidationError(ValueError):
@@ -45,6 +44,7 @@ class ChatServiceValidationError(ValueError):
 
 @dataclass(slots=True, frozen=True)
 class ResolvedAgentConfig:
+    agent_name: str
     model: str
     task: str
     tools: list[ToolDefinition]
@@ -71,26 +71,21 @@ class ChatService:
         *,
         session: DbSession,
         settings: Settings,
-        tool_registry: ToolRegistry,
-        provider_registry: ProviderRegistry,
         agent_loader: AgentLoader,
+        user_repository: UserRepository,
+        session_repository: SessionRepository,
+        agent_repository: AgentRepository,
+        item_repository: ItemRepository,
+        runner: Runner,
     ) -> None:
         self.session = session
         self.settings = settings
-        self.tool_registry = tool_registry
-        self.provider_registry = provider_registry
         self.agent_loader = agent_loader
-        self.user_repository = UserRepository(session)
-        self.session_repository = SessionRepository(session)
-        self.agent_repository = AgentRepository(session)
-        self.item_repository = ItemRepository(session)
-        self.runner = Runner(
-            agent_repository=self.agent_repository,
-            session_repository=self.session_repository,
-            item_repository=self.item_repository,
-            tool_registry=tool_registry,
-            provider_registry=provider_registry,
-        )
+        self.user_repository = user_repository
+        self.session_repository = session_repository
+        self.agent_repository = agent_repository
+        self.item_repository = item_repository
+        self.runner = runner
 
     async def process_chat(self, chat_request: ChatRequest) -> ChatResponse:
         try:
@@ -99,7 +94,11 @@ class ChatService:
                 raise ChatServiceValidationError(setup.error or "Chat setup failed.")
 
             self.session.flush()
-            response = await self.execute_chat(setup.value.agent.id, setup.value.last_sequence)
+            response = await self.execute_chat(
+                setup.value.agent.id,
+                setup.value.last_sequence,
+                include_tool_result=chat_request.include_tool_result,
+            )
             self.session.commit()
             return response
         except ChatServiceValidationError:
@@ -132,14 +131,23 @@ class ChatService:
             ),
         )
 
-    async def execute_chat(self, agent_id: str, last_sequence: int) -> ChatResponse:
-        result = await self.runner.run_agent(agent_id)
+    async def execute_chat(
+        self,
+        agent_id: str,
+        last_sequence: int,
+        *,
+        include_tool_result: bool = False,
+    ) -> ChatResponse:
+        result = await self.runner.run_agent(agent_id, last_agent_sequence=last_sequence)
         agent = result.agent or self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent disappeared during execution: {agent_id}")
 
         response_items = self.item_repository.list_by_agent_after_sequence(agent_id, last_sequence)
-        output = self._build_response_output(response_items)
+        output = self._build_response_output(
+            response_items,
+            include_tool_result=include_tool_result,
+        )
 
         return ChatResponse(
             id=agent.id,
@@ -189,6 +197,7 @@ class ChatService:
         loaded_agent = self.agent_loader.load_agent(self.settings.DEFAULT_AGENT)
         default_model = f"openrouter:{self.settings.OPEN_ROUTER_LLM_MODEL}"
         base_config = ResolvedAgentConfig(
+            agent_name=loaded_agent.agent_name,
             model=loaded_agent.model or default_model,
             task=loaded_agent.system_prompt or "You are Manfred, a helpful assistant.",
             tools=list(loaded_agent.tools),
@@ -198,6 +207,7 @@ class ChatService:
             return base_config
 
         return ResolvedAgentConfig(
+            agent_name=base_config.agent_name,
             model=request_config.model or base_config.model,
             task=request_config.task or base_config.task,
             tools=self._resolve_tools(request_config.tools) if request_config.tools is not None else base_config.tools,
@@ -239,6 +249,7 @@ class ChatService:
             if agent is None:
                 raise RuntimeError(f"Session integrity error: root agent not found: {session.root_agent_id}")
 
+            agent.agent_name = config.agent_name
             agent.config = agent_config
             agent.status = AgentStatus.PENDING
             agent.updated_at = now
@@ -251,6 +262,7 @@ class ChatService:
             root_agent_id=agent_id,
             parent_id=None,
             depth=0,
+            agent_name=config.agent_name,
             status=AgentStatus.PENDING,
             turn_count=0,
             config=agent_config,
@@ -294,8 +306,12 @@ class ChatService:
             self.item_repository.save(item)
 
     @staticmethod
-    def _build_response_output(items: list[Item]) -> list[TextOutputItem | FunctionCallOutputItem]:
-        output: list[TextOutputItem | FunctionCallOutputItem] = []
+    def _build_response_output(
+        items: list[Item],
+        *,
+        include_tool_result: bool = False,
+    ) -> list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem]:
+        output: list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem] = []
 
         for item in items:
             if item.type == ItemType.MESSAGE and item.role == MessageRole.ASSISTANT and item.content:
@@ -310,6 +326,18 @@ class ChatService:
                         arguments=ChatService._deserialize_arguments(item.arguments_json),
                     )
                 )
+                continue
+
+            if include_tool_result and item.type == ItemType.FUNCTION_CALL_OUTPUT:
+                tool_result = ChatService._deserialize_tool_result(item.output)
+                output.append(
+                    FunctionCallResultOutputItem(
+                        call_id=item.call_id or "",
+                        name=item.name or "",
+                        output=ChatService._extract_tool_result_output(tool_result),
+                        is_error=item.is_error,
+                    )
+                )
 
         return output
 
@@ -322,3 +350,26 @@ class ChatService:
         except ValueError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _deserialize_tool_result(raw_output: str | None) -> dict[str, Any]:
+        if not raw_output:
+            return {}
+        try:
+            payload = json.loads(raw_output)
+        except ValueError:
+            return {"output": raw_output}
+        if not isinstance(payload, dict):
+            return {"output": raw_output}
+        return payload
+
+    @staticmethod
+    def _extract_tool_result_output(result: dict[str, Any]) -> str | None:
+        value = result.get("output")
+        if value is None:
+            value = result.get("error")
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=True)

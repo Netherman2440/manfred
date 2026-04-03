@@ -44,6 +44,7 @@ class AgentRepository:
         model.root_agent_id = agent.root_agent_id
         model.parent_id = agent.parent_id
         model.depth = agent.depth
+        model.agent_name = agent.agent_name
         model.status = agent.status.value
         model.model = agent.config.model
         model.task = agent.config.task
@@ -64,6 +65,7 @@ class AgentRepository:
             root_agent_id=model.root_agent_id,
             parent_id=model.parent_id,
             depth=model.depth,
+            agent_name=model.agent_name,
             status=AgentStatus(model.status),
             turn_count=model.turn_count,
             config=AgentConfig(

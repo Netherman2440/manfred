@@ -1,6 +1,5 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from app.domain.tool import ToolDefinition
 from app.domain.types import AgentStatus
@@ -21,6 +20,7 @@ class Agent:
     root_agent_id: str
     parent_id: str | None
     depth: int
+    agent_name: str | None
     status: AgentStatus
     turn_count: int
     config: AgentConfig
