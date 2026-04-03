@@ -167,8 +167,12 @@ To bedzie spójne z reszta domeny i nie wymusi Pydantica w runtime.
 W `event_bus.py` potrzebny jest prosty in-memory bus:
 
 - `emit(event)`,
-- `subscribe(event_type, handler) -> unsubscribe`,
-- `subscribe_any(handler) -> unsubscribe`.
+- `subscribe(event_type, handler) -> unsubscribe`.
+
+Kontrakt `subscribe(...)` powinien obslugiwac dwa tryby:
+
+- `subscribe("agent.started", handler)` dla konkretnego typu eventu,
+- `subscribe("any", handler)` dla globalnego subscriber-a.
 
 Zachowanie:
 
@@ -191,7 +195,7 @@ Mozliwe miejsce:
 ### 4. Ustalic zrodlo `trace_id`
 
 To jest jedna z wazniejszych decyzji.
-Rekomendacja na start:
+Ustalona decyzja na start:
 
 - generowac `trace_id` przy `run_agent(...)`,
 - trzymac je w `AgentRunContext`,
@@ -204,14 +208,17 @@ Nie polecam uzalezniac Langfuse od ephemeral ID, jesli docelowo ma byc resume i 
 Zmiany w `container.py`:
 
 - zarejestrowac singleton `EventBus`,
-- przekazac go do `Runner`,
+- zarejestrowac `Runner` w kontenerze,
+- przekazac `EventBus` do `Runner`,
 - udostepnic go aplikacji przy starcie.
 
 Zmiany w `ChatService`:
 
-- `Runner` tworzony przez serwis powinien dostawac bus z DI, a nie tworzyc go sam.
+- repozytoria nie powinny byc tworzone ad hoc wewnatrz serwisu,
+- `Runner` nie powinien byc tworzony wewnatrz serwisu,
+- `ChatService` powinien dostawac repozytoria i `Runner` przez DI z `container.py`.
 
-Docelowo lepiej byloby tez wyniesc sam `Runner` do containera, ale nie jest to warunek konieczny dla pierwszego kroku z eventami.
+To jest zgodne z konwencja repo: `container.py` pozostaje pojedynczym miejscem skladania zaleznosci wspoldzielonych.
 
 ### 6. Podpiac eventy w `Runner`
 
@@ -241,10 +248,11 @@ Payload:
 
 - `turn_count`
 
-Rekomendacja:
+Ustalona semantyka:
 
-- emitowac aktualny numer tury przed jej wykonaniem,
-- ujednolicic semantyke czy to jest `0-based` czy `1-based`, najlepiej opisac to jawnie i trzymac wszedzie tak samo.
+- `turn_count` w eventach ma odzwierciedlac `agent.turn_count`,
+- nie wprowadzac osobnej numeracji tylko dla observability,
+- opisac jawnie, ze jest to licznik zgodny z polem domenowym agenta.
 
 #### `generation.completed`
 
@@ -291,6 +299,10 @@ Emitowac, gdy:
 
 - tool rzuci wyjatek,
 - albo zwroci rezultat `ok=False`.
+
+Przyjeta decyzja:
+
+- emitowac `tool.failed` rowniez wtedy, gdy tool nie zostal znaleziony.
 
 Payload:
 
@@ -355,7 +367,7 @@ Rekomendowany nowy modul:
 
 Zadanie loggera:
 
-- subskrybowac wszystkie eventy przez `subscribe_any(...)`,
+- subskrybowac wszystkie eventy przez `subscribe("any", ...)`,
 - logowac je w sposob strukturalny,
 - nie dotykac stanu runtime.
 
@@ -403,6 +415,12 @@ Zachowanie operacyjne:
 - jesli `LANGFUSE_ENABLED` jest `False`, subscriber jest no-op,
 - jesli brakuje kluczy, subscriber jest no-op,
 - bledy po stronie SDK nie moga przerwac runnera.
+
+Decyzja projektowa:
+
+- Langfuse wchodzi w zakres planu i kontraktu architektonicznego juz teraz,
+- implementacja Langfuse moze byc wykonana osobno niz event bus i logger,
+- plan powinien zostac rozpisany tak, zeby wdrozenie Langfuse bylo niezalezne od szczegolow implementacji eventow.
 
 ### 9. Uzupełnic konfiguracje i zaleznosci
 
@@ -473,6 +491,11 @@ Po stabilizacji eventow runtime:
 - flush i cleanup,
 - testy integracyjne lub smoke testy.
 
+Ustalony kierunek:
+
+- Langfuse pozostaje w planie i w przewidywanym rollout-cie,
+- ale moze byc realizowany przez osobny task lub osobna osobe po ustabilizowaniu kontraktu eventow.
+
 ### Etap C - waiting/resumed/cancelled
 
 Dopiero gdy wejdzie prawdziwy flow:
@@ -495,7 +518,12 @@ Przed implementacja warto jawnie przyjac:
 - eventy sa observability only,
 - `generation.completed` wchodzi od razu mimo ze nie ma go na grafice,
 - `tool.failed` wchodzi od razu,
+- `tool.failed` obejmuje tez przypadek `tool not found`,
 - `trace_id` ma byc stabilne per run, a docelowo per wznowione wykonanie,
+- `trace_id` jest trzymane w `AgentRunContext`,
+- `Runner` i repozytoria sa skladane przez DI w `container.py`,
+- globalny subscriber korzysta z `subscribe("any", handler)`,
+- `turn_count` w eventach ma byc zgodny z `agent.turn_count`,
 - `waiting/resumed` sa w kontrakcie, ale nie sa fake-implementowane bez realnego flow.
 
 ## Proponowana kolejnosc prac

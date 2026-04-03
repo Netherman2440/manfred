@@ -34,10 +34,8 @@ from app.domain import (
     WebSearchToolDefinition,
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
-from app.providers import ProviderRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
-from app.tools.registry import ToolRegistry
 
 
 class ChatServiceValidationError(ValueError):
@@ -72,26 +70,21 @@ class ChatService:
         *,
         session: DbSession,
         settings: Settings,
-        tool_registry: ToolRegistry,
-        provider_registry: ProviderRegistry,
         agent_loader: AgentLoader,
+        user_repository: UserRepository,
+        session_repository: SessionRepository,
+        agent_repository: AgentRepository,
+        item_repository: ItemRepository,
+        runner: Runner,
     ) -> None:
         self.session = session
         self.settings = settings
-        self.tool_registry = tool_registry
-        self.provider_registry = provider_registry
         self.agent_loader = agent_loader
-        self.user_repository = UserRepository(session)
-        self.session_repository = SessionRepository(session)
-        self.agent_repository = AgentRepository(session)
-        self.item_repository = ItemRepository(session)
-        self.runner = Runner(
-            agent_repository=self.agent_repository,
-            session_repository=self.session_repository,
-            item_repository=self.item_repository,
-            tool_registry=tool_registry,
-            provider_registry=provider_registry,
-        )
+        self.user_repository = user_repository
+        self.session_repository = session_repository
+        self.agent_repository = agent_repository
+        self.item_repository = item_repository
+        self.runner = runner
 
     async def process_chat(self, chat_request: ChatRequest) -> ChatResponse:
         try:
@@ -144,7 +137,7 @@ class ChatService:
         *,
         include_tool_result: bool = False,
     ) -> ChatResponse:
-        result = await self.runner.run_agent(agent_id)
+        result = await self.runner.run_agent(agent_id, last_agent_sequence=last_sequence)
         agent = result.agent or self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent disappeared during execution: {agent_id}")
