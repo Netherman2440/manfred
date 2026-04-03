@@ -1,4 +1,5 @@
 import logging
+from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
 from app.db.base import utcnow
@@ -138,11 +139,15 @@ def test_langfuse_subscriber_sets_trace_io_and_simplifies_generation_payloads() 
     agent_observation = Mock()
     agent_observation.id = "obs-agent-1"
     generation_observation = Mock()
+    propagated_attributes: list[dict[str, str | None]] = []
     client.start_observation.side_effect = [
         agent_observation,
         generation_observation,
     ]
-    subscriber = LangfuseSubscriber(client=client)
+    subscriber = LangfuseSubscriber(
+        client=client,
+        propagate_attributes_fn=lambda **kwargs: _record_trace_attributes(propagated_attributes, **kwargs),
+    )
     agent = make_agent()
     ctx = build_event_context(agent, "trace-1")
 
@@ -160,8 +165,10 @@ def test_langfuse_subscriber_sets_trace_io_and_simplifies_generation_payloads() 
             model="openai/gpt-4o-mini",
             instructions=agent.config.task,
             input=[
+                ProviderMessageInputItem(role="user", content="Stare pytanie."),
                 ProviderMessageInputItem(role="user", content="Hej, policz to."),
                 ProviderMessageInputItem(role="assistant", content="Zaraz policze."),
+                ProviderMessageInputItem(role="user", content="A co wiesz o Polsce?"),
             ],
             output=[ProviderTextOutputItem(text="Wynik to 15538.")],
             usage=ProviderUsage(input_tokens=10, output_tokens=5, total_tokens=15),
@@ -181,5 +188,25 @@ def test_langfuse_subscriber_sets_trace_io_and_simplifies_generation_payloads() 
     agent_observation.set_trace_io.assert_any_call(input="Hej, policz to.")
     agent_observation.set_trace_io.assert_any_call(output="Wynik to 15538.")
     generation_call = client.start_observation.call_args_list[1]
-    assert generation_call.kwargs["input"] == "Hej, policz to."
+    assert generation_call.kwargs["input"] == "A co wiesz o Polsce?"
     assert generation_call.kwargs["output"] == "Wynik to 15538."
+    assert propagated_attributes == [
+        {
+            "user_id": None,
+            "session_id": "session-1",
+            "trace_name": "manfred",
+        },
+        {
+            "user_id": None,
+            "session_id": "session-1",
+            "trace_name": "manfred",
+        },
+    ]
+
+
+def _record_trace_attributes(
+    storage: list[dict[str, str | None]],
+    **kwargs: str | None,
+):
+    storage.append(dict(kwargs))
+    return nullcontext()

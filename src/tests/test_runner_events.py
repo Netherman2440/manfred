@@ -237,3 +237,94 @@ async def test_runner_emits_agent_failed_for_unknown_provider(db_session: Sessio
         "turn.started",
         "agent.failed",
     ]
+
+
+def test_runner_uses_last_new_user_message_for_run_input() -> None:
+    now = utcnow()
+    agent = Agent(
+        id="agent-1",
+        session_id="session-1",
+        root_agent_id="agent-1",
+        parent_id=None,
+        depth=0,
+        agent_name="manfred",
+        status=AgentStatus.PENDING,
+        turn_count=0,
+        config=AgentConfig(
+            model="openrouter:test-model",
+            task="Solve the task",
+            tools=[],
+            temperature=None,
+        ),
+        created_at=now,
+        updated_at=now,
+    )
+    session = DomainSession(
+        id="session-1",
+        user_id="user-1",
+        root_agent_id="agent-1",
+        status=SessionStatus.ACTIVE,
+        title=None,
+        created_at=now,
+        updated_at=now,
+    )
+    items = [
+        Item(
+            id=uuid4().hex,
+            session_id="session-1",
+            agent_id="agent-1",
+            sequence=1,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content="Poprzednia wiadomosc",
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=now,
+        ),
+        Item(
+            id=uuid4().hex,
+            session_id="session-1",
+            agent_id="agent-1",
+            sequence=2,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content="Pierwsza nowa wiadomosc",
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=now,
+        ),
+        Item(
+            id=uuid4().hex,
+            session_id="session-1",
+            agent_id="agent-1",
+            sequence=3,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content="Ostatnia nowa wiadomosc",
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=now,
+        ),
+    ]
+    context = type(
+        "Context",
+        (),
+        {
+            "agent": agent,
+            "session": session,
+            "items": items,
+            "trace_id": "trace-1",
+            "last_agent_sequence": 1,
+        },
+    )()
+
+    assert Runner._find_run_user_input(context) == "Ostatnia nowa wiadomosc"

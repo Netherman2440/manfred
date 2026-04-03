@@ -528,12 +528,13 @@ class Runner:
 
     @staticmethod
     def _find_run_user_input(context: AgentRunContext) -> str | None:
+        user_input: str | None = None
         for item in context.items:
             if item.sequence <= context.last_agent_sequence:
                 continue
             if item.type == ItemType.MESSAGE and item.role == MessageRole.USER and item.content:
-                return item.content
-        return None
+                user_input = item.content
+        return user_input
 
     @staticmethod
     def _find_run_result(context: AgentRunContext) -> str | None:
