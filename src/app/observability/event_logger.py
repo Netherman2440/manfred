@@ -228,10 +228,10 @@ def _format_field_value(value: Any) -> str:
         if _SAFE_VALUE_RE.match(truncated):
             return truncated
         return json.dumps(truncated, ensure_ascii=True)
-    if isinstance(value, (int, float)):
-        return str(value)
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
     return _serialize(value)
 
 

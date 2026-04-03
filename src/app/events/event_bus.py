@@ -15,7 +15,7 @@ class EventBus:
         self._logger = logging.getLogger(__name__)
 
     def emit(self, event: BaseEvent) -> None:
-        specific_handlers = tuple(self._handlers.get(getattr(event, "type"), ()))
+        specific_handlers = tuple(self._handlers.get(event.type, ()))
         any_handlers = tuple(self._handlers.get("any", ()))
 
         for handler in specific_handlers:
@@ -44,4 +44,4 @@ class EventBus:
         try:
             handler(event)
         except Exception:
-            self._logger.exception("Event handler failed for %s", getattr(event, "type", "unknown"))
+            self._logger.exception("Event handler failed for %s", event.type)

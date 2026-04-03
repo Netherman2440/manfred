@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ class EventContext:
 @dataclass(slots=True, frozen=True)
 class BaseEvent:
     ctx: EventContext
+    type: str = field(init=False)
 
 
 def build_event_context(agent: Agent, trace_id: str) -> EventContext:

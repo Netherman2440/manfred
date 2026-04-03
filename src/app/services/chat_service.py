@@ -329,11 +329,12 @@ class ChatService:
                 continue
 
             if include_tool_result and item.type == ItemType.FUNCTION_CALL_OUTPUT:
+                tool_result = ChatService._deserialize_tool_result(item.output)
                 output.append(
                     FunctionCallResultOutputItem(
                         call_id=item.call_id or "",
                         name=item.name or "",
-                        output=item.output,
+                        output=ChatService._extract_tool_result_output(tool_result),
                         is_error=item.is_error,
                     )
                 )
@@ -349,3 +350,26 @@ class ChatService:
         except ValueError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _deserialize_tool_result(raw_output: str | None) -> dict[str, Any]:
+        if not raw_output:
+            return {}
+        try:
+            payload = json.loads(raw_output)
+        except ValueError:
+            return {"output": raw_output}
+        if not isinstance(payload, dict):
+            return {"output": raw_output}
+        return payload
+
+    @staticmethod
+    def _extract_tool_result_output(result: dict[str, Any]) -> str | None:
+        value = result.get("output")
+        if value is None:
+            value = result.get("error")
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=True)
