@@ -13,17 +13,17 @@ Plan celowo traktuje eventy jako warstwe obserwowalnosci, a nie jako mechanizm s
 
 ## Referencje
 
-- Event bus: `/home/netherman/code/manfred/src/app/events/event_bus.py`
-- Definicja bazowa eventu: `/home/netherman/code/manfred/src/app/events/definitions/base.py`
-- Przyklad eventu: `/home/netherman/code/manfred/src/app/events/definitions/agent_started.py`
-- Runner: `/home/netherman/code/manfred/src/app/runtime/runner.py`
-- DI container: `/home/netherman/code/manfred/src/app/container.py`
-- App bootstrap: `/home/netherman/code/manfred/src/app/main.py`
-- Konfiguracja: `/home/netherman/code/manfred/src/app/config.py`
-- Referencja TS emitter: `/home/netherman/code/4th-devs/01_05_agent/src/events/emitter.ts`
-- Referencja TS logger: `/home/netherman/code/4th-devs/01_05_agent/src/lib/event-logger.ts`
-- Referencja TS Langfuse subscriber: `/home/netherman/code/4th-devs/01_05_agent/src/lib/langfuse-subscriber.ts`
-- Referencja TS event types: `/home/netherman/code/4th-devs/01_05_agent/src/events/types.ts`
+- Event bus: [`src/app/events/event_bus.py`](../src/app/events/event_bus.py)
+- Definicja bazowa eventu: [`src/app/events/definitions/base.py`](../src/app/events/definitions/base.py)
+- Przyklad eventu: [`src/app/events/definitions/agent_started.py`](../src/app/events/definitions/agent_started.py)
+- Runner: [`src/app/runtime/runner.py`](../src/app/runtime/runner.py)
+- DI container: [`src/app/container.py`](../src/app/container.py)
+- App bootstrap: [`src/app/main.py`](../src/app/main.py)
+- Konfiguracja: [`src/app/config.py`](../src/app/config.py)
+- Referencja TS emitter: zewnetrzny plik `4th-devs/01_05_agent/src/events/emitter.ts` (brak kopii w tym repo)
+- Referencja TS logger: zewnetrzny plik `4th-devs/01_05_agent/src/lib/event-logger.ts` (brak kopii w tym repo)
+- Referencja TS Langfuse subscriber: zewnetrzny plik `4th-devs/01_05_agent/src/lib/langfuse-subscriber.ts` (brak kopii w tym repo)
+- Referencja TS event types: zewnetrzny plik `4th-devs/01_05_agent/src/events/types.ts` (brak kopii w tym repo)
 
 ## Cel etapu
 
@@ -67,9 +67,9 @@ Nie nalezy tworzyc nowego busa ad hoc w route handlerach ani wewnatrz `Runner`.
 
 Aktualny stan kodu wymusza kilka zalozen dla planu:
 
-- `/home/netherman/code/manfred/src/app/events/event_bus.py` jest pusty,
-- `/home/netherman/code/manfred/src/app/events/definitions/base.py` jest pusty,
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_started.py` jest pusty,
+- `src/app/events/event_bus.py` jest pusty,
+- `src/app/events/definitions/base.py` jest pusty,
+- `src/app/events/definitions/agent_started.py` jest pusty,
 - `Runner` jest juz zaimplementowany i to on jest realnym miejscem emisji eventow,
 - `LANGFUSE_*` istnieje juz w `config.py`,
 - repo nie ma jeszcze gotowej infrastruktury logowania runtime,
@@ -131,20 +131,20 @@ Rekomendacja:
 
 Rekomendowany uklad:
 
-- `/home/netherman/code/manfred/src/app/events/event_bus.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/base.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_started.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/turn_started.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/turn_completed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/generation_completed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/tool_called.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/tool_completed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/tool_failed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_completed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_failed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_waiting.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_resumed.py`
-- `/home/netherman/code/manfred/src/app/events/definitions/agent_cancelled.py`
+- `src/app/events/event_bus.py`
+- `src/app/events/definitions/base.py`
+- `src/app/events/definitions/agent_started.py`
+- `src/app/events/definitions/turn_started.py`
+- `src/app/events/definitions/turn_completed.py`
+- `src/app/events/definitions/generation_completed.py`
+- `src/app/events/definitions/tool_called.py`
+- `src/app/events/definitions/tool_completed.py`
+- `src/app/events/definitions/tool_failed.py`
+- `src/app/events/definitions/agent_completed.py`
+- `src/app/events/definitions/agent_failed.py`
+- `src/app/events/definitions/agent_waiting.py`
+- `src/app/events/definitions/agent_resumed.py`
+- `src/app/events/definitions/agent_cancelled.py`
 
 Kazdy event w osobnym pliku jest zgodny z kierunkiem, ktory juz zaznaczyles.
 
@@ -363,7 +363,7 @@ Dzis `Runner` nie ma jeszcze tej semantyki, wiec nie nalezy udawac implementacji
 
 Rekomendowany nowy modul:
 
-- `/home/netherman/code/manfred/src/app/observability/event_logger.py`
+- `src/app/observability/event_logger.py`
 
 Zadanie loggera:
 
@@ -390,7 +390,7 @@ Wazne:
 
 Rekomendowany nowy modul:
 
-- `/home/netherman/code/manfred/src/app/observability/langfuse_subscriber.py`
+- `src/app/observability/langfuse_subscriber.py`
 
 Subscriber powinien sluchac tylko eventow potrzebnych do tracingu:
 
@@ -434,7 +434,7 @@ W `config.py` pola Langfuse juz istnieja:
 
 Brakujace kroki:
 
-- dodac odpowiedni SDK do `pyproject.toml`,
+- dodac odpowiedni SDK do `src/pyproject.toml`,
 - jesli projekt tego wymaga, dodac parametry typu flush timeout,
 - dodac `.env.EXAMPLE`, bo repo go obecnie nie ma, a konwencja projektu tego wymaga.
 
