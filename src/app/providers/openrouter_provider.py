@@ -143,10 +143,16 @@ class OpenRouterProvider(Provider):
         message = choices[0].get("message") or {}
         output = OpenRouterProvider._parse_output_items(message)
         usage_payload = payload.get("usage") or {}
+        prompt_tokens_details = usage_payload.get("prompt_tokens_details") or {}
         usage = ProviderUsage(
             input_tokens=int(usage_payload.get("prompt_tokens") or 0),
             output_tokens=int(usage_payload.get("completion_tokens") or 0),
             total_tokens=int(usage_payload.get("total_tokens") or 0),
+            cached_tokens=int(
+                prompt_tokens_details.get("cached_tokens")
+                or usage_payload.get("cached_tokens")
+                or 0
+            ),
         )
         return ProviderResponse(output=output, usage=usage)
 

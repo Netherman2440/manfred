@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import asdict, is_dataclass
 from typing import Any
@@ -26,108 +27,102 @@ def subscribe_event_logger(event_bus: EventBus) -> Callable[[], None]:
 
     def handle(event: object) -> None:
         if isinstance(event, AgentStartedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s session_id=%s agent_name=%s model=%s user_input=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.ctx.session_id,
-                event.agent_name or "-",
-                event.model,
-                _truncate(event.user_input),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=event.user_input,
+                model=event.model,
             )
             return
 
         if isinstance(event, TurnStartedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s turn_count=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.turn_count,
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=f"Turn {event.turn_count} started.",
+                turn=event.turn_count,
             )
             return
 
         if isinstance(event, GenerationCompletedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s model=%s tokens=%s content=%s tool_calls=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.model,
-                _format_usage(event.usage),
-                _truncate(_extract_text_output(event.output)),
-                _serialize(_extract_tool_calls(event.output)),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=_extract_text_output(event.output),
+                usage=event.usage,
+                model=event.model,
+                tool_calls=_extract_tool_calls(event.output),
+                duration_ms=event.duration_ms,
             )
             return
 
         if isinstance(event, ToolCalledEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s call_id=%s tool=%s arguments=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.call_id,
-                event.name,
-                _serialize(event.arguments),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=f"{event.name} called.",
+                tool=event.name,
+                tool_arguments=event.arguments,
             )
             return
 
         if isinstance(event, ToolCompletedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s call_id=%s tool=%s duration_ms=%s output=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.call_id,
-                event.name,
-                event.duration_ms,
-                _serialize(event.output),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=_extract_tool_output_text(event.output) or f"{event.name} completed.",
+                tool=event.name,
+                tool_arguments=event.arguments,
+                tool_result=event.output,
+                duration_ms=event.duration_ms,
             )
             return
 
         if isinstance(event, ToolFailedEvent):
-            logger.warning(
-                "event=%s trace_id=%s agent_id=%s call_id=%s tool=%s duration_ms=%s error=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.call_id,
-                event.name,
-                event.duration_ms,
-                _truncate(event.error),
+            _log_event(
+                logger,
+                logging.WARNING,
+                event,
+                content=event.error,
+                tool=event.name,
+                tool_arguments=event.arguments,
+                duration_ms=event.duration_ms,
             )
             return
 
         if isinstance(event, TurnCompletedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s turn_count=%s tokens=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.turn_count,
-                _format_usage(event.usage),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=f"Turn {event.turn_count} completed.",
+                usage=event.usage,
+                turn=event.turn_count,
             )
             return
 
         if isinstance(event, AgentCompletedEvent):
-            logger.info(
-                "event=%s trace_id=%s agent_id=%s duration_ms=%s result=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                event.duration_ms,
-                _truncate(event.result),
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=event.result,
+                usage=event.usage,
+                duration_ms=event.duration_ms,
             )
             return
 
         if isinstance(event, AgentFailedEvent):
-            logger.error(
-                "event=%s trace_id=%s agent_id=%s error=%s",
-                event.type,
-                event.ctx.trace_id,
-                event.ctx.agent_id,
-                _truncate(event.error),
+            _log_event(
+                logger,
+                logging.ERROR,
+                event,
+                content=event.error,
             )
 
     return event_bus.subscribe("any", handle)
@@ -144,10 +139,100 @@ def _extract_tool_calls(output: list[object]) -> list[str]:
     return [item.name for item in output if isinstance(item, ProviderFunctionCallOutputItem) and item.name]
 
 
-def _format_usage(usage: ProviderUsage | None) -> str:
-    if usage is None:
+def _extract_tool_output_text(output: Any) -> str | None:
+    if not isinstance(output, dict):
+        return None
+
+    value = output.get("output")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _log_event(
+    logger: logging.Logger,
+    level: int,
+    event: object,
+    *,
+    content: str | None,
+    usage: ProviderUsage | None = None,
+    **fields: Any,
+) -> None:
+    payload = [
+        f"event={_format_field_value(getattr(event, 'type', 'unknown'))}",
+        f"agent={_format_field_value(_extract_agent_name(event))}",
+        f"content={_format_content(content)}",
+        *_format_usage_fields(usage, overrides=fields),
+    ]
+    payload.extend(_format_extra_fields(fields))
+    logger.log(level, " ".join(payload))
+
+
+def _extract_agent_name(event: object) -> str | None:
+    ctx = getattr(event, "ctx", None)
+    if ctx is not None:
+        agent_name = getattr(ctx, "agent_name", None)
+        if isinstance(agent_name, str) and agent_name:
+            return agent_name
+
+    agent_name = getattr(event, "agent_name", None)
+    if isinstance(agent_name, str) and agent_name:
+        return agent_name
+    return None
+
+
+def _format_usage_fields(usage: ProviderUsage | None, *, overrides: dict[str, Any]) -> list[str]:
+    input_tokens = overrides.pop("input_tokens", usage.input_tokens if usage is not None else None)
+    output_tokens = overrides.pop("output_tokens", usage.output_tokens if usage is not None else None)
+    total_tokens = overrides.pop("total_tokens", usage.total_tokens if usage is not None else None)
+    cached_tokens = overrides.pop("cached_tokens", usage.cached_tokens if usage is not None else None)
+
+    if all(value is None for value in (input_tokens, output_tokens, total_tokens, cached_tokens)):
+        return []
+
+    return [
+        f"input_tokens={_format_field_value(input_tokens)}",
+        f"output_tokens={_format_field_value(output_tokens)}",
+        f"total_tokens={_format_field_value(total_tokens)}",
+        f"cached_tokens={_format_field_value(cached_tokens)}",
+    ]
+
+
+def _format_extra_fields(fields: dict[str, Any]) -> list[str]:
+    parts: list[str] = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if key == "tool_calls" and isinstance(value, list) and not value:
+            continue
+        parts.append(f"{key}={_format_field_value(value)}")
+    return parts
+
+
+def _format_content(content: str | None) -> str:
+    if not content:
         return "-"
-    return f"{usage.input_tokens}/{usage.output_tokens}/{usage.total_tokens}"
+    return _format_field_value(_truncate(content, 400))
+
+
+_SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
+
+
+def _format_field_value(value: Any) -> str:
+    if value is None:
+        return "-"
+    if is_dataclass(value):
+        value = asdict(value)
+    if isinstance(value, str):
+        truncated = _truncate(value, 400)
+        if _SAFE_VALUE_RE.match(truncated):
+            return truncated
+        return json.dumps(truncated, ensure_ascii=True)
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return _serialize(value)
 
 
 def _serialize(value: Any) -> str:

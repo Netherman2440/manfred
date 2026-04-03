@@ -15,6 +15,7 @@ class EventContext:
     trace_id: str
     session_id: str
     agent_id: str
+    agent_name: str | None
     root_agent_id: str
     parent_agent_id: str | None
     depth: int
@@ -32,6 +33,7 @@ def build_event_context(agent: Agent, trace_id: str) -> EventContext:
         trace_id=trace_id,
         session_id=agent.session_id,
         agent_id=agent.id,
+        agent_name=agent.agent_name,
         root_agent_id=agent.root_agent_id,
         parent_agent_id=agent.parent_id,
         depth=agent.depth,

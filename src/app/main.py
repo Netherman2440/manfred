@@ -19,11 +19,21 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        unsubscribe = subscribe_event_logger(container.event_bus())
+        event_bus = container.event_bus()
+        unsubscribe_logger = subscribe_event_logger(event_bus)
+        langfuse_subscriber = container.langfuse_subscriber()
+        unsubscribe_langfuse = (
+            langfuse_subscriber.subscribe(event_bus)
+            if langfuse_subscriber is not None
+            else (lambda: None)
+        )
         try:
             yield
         finally:
-            unsubscribe()
+            unsubscribe_langfuse()
+            if langfuse_subscriber is not None:
+                langfuse_subscriber.shutdown()
+            unsubscribe_logger()
 
     app = FastAPI(
         title=settings.PROJECT_NAME,

@@ -10,6 +10,7 @@ from app.config import Settings
 from app.domain import Tool
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
+from app.observability import build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
@@ -110,6 +111,10 @@ class Container(containers.DeclarativeContainer):
         tools=providers.Callable(get_tools),
     )
     event_bus = providers.Singleton(EventBus)
+    langfuse_subscriber = providers.Singleton(
+        build_langfuse_subscriber,
+        settings=settings,
+    )
 
     openrouter_provider = providers.Singleton(
         OpenRouterProvider,

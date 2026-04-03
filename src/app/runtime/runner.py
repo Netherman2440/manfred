@@ -517,6 +517,7 @@ class Runner:
             input_tokens=total.input_tokens + usage.input_tokens,
             output_tokens=total.output_tokens + usage.output_tokens,
             total_tokens=total.total_tokens + usage.total_tokens,
+            cached_tokens=total.cached_tokens + usage.cached_tokens,
         )
 
     @staticmethod
