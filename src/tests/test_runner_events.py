@@ -95,6 +95,7 @@ def make_runner(
             root_agent_id="agent-1",
             parent_id=None,
             depth=0,
+            agent_name="manfred",
             status=AgentStatus.PENDING,
             turn_count=0,
             config=AgentConfig(

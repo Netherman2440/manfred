@@ -12,7 +12,7 @@ AGENT_EXTENSION = ".agent.md"
 
 @dataclass(slots=True, frozen=True)
 class AgentTemplate:
-    name: str
+    agent_name: str
     model: str | None
     tools: list[str]
     system_prompt: str
@@ -20,7 +20,7 @@ class AgentTemplate:
 
 @dataclass(slots=True, frozen=True)
 class LoadedAgent:
-    name: str
+    agent_name: str
     model: str | None
     tools: list[ToolDefinition]
     system_prompt: str
@@ -36,7 +36,7 @@ class AgentLoader:
         template = self.load_agent_template(file_path)
         tools = self.resolve_tool_definitions(template.tools)
         return LoadedAgent(
-            name=template.name,
+            agent_name=template.agent_name,
             model=template.model,
             tools=tools,
             system_prompt=template.system_prompt,
@@ -47,7 +47,8 @@ class AgentLoader:
         content = file_path.read_text(encoding="utf-8")
         metadata, system_prompt = self._split_frontmatter(content)
 
-        name = str(metadata.get("name") or self._agent_name_from_path(file_path))
+        raw_agent_name = metadata.get("agent_name") or metadata.get("name")
+        agent_name = str(raw_agent_name or self._agent_name_from_path(file_path))
         model = metadata.get("model")
         if not isinstance(model, str) or not model.strip():
             model = None
@@ -56,7 +57,7 @@ class AgentLoader:
         tools = raw_tools if isinstance(raw_tools, list) else []
 
         return AgentTemplate(
-            name=name,
+            agent_name=agent_name,
             model=model,
             tools=[tool for tool in tools if isinstance(tool, str) and tool.strip()],
             system_prompt=system_prompt.strip(),

@@ -27,11 +27,12 @@ def subscribe_event_logger(event_bus: EventBus) -> Callable[[], None]:
     def handle(event: object) -> None:
         if isinstance(event, AgentStartedEvent):
             logger.info(
-                "event=%s trace_id=%s agent_id=%s session_id=%s model=%s user_input=%s",
+                "event=%s trace_id=%s agent_id=%s session_id=%s agent_name=%s model=%s user_input=%s",
                 event.type,
                 event.ctx.trace_id,
                 event.ctx.agent_id,
                 event.ctx.session_id,
+                event.agent_name or "-",
                 event.model,
                 _truncate(event.user_input),
             )

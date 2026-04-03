@@ -110,7 +110,7 @@ class Runner:
                 ctx=build_event_context(context.agent, context.trace_id),
                 model=context.agent.config.model,
                 task=context.agent.config.task,
-                agent_name=None,
+                agent_name=context.agent.agent_name,
                 user_id=context.session.user_id,
                 user_input=self._find_run_user_input(context),
             )

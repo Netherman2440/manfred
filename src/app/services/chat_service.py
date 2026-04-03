@@ -44,6 +44,7 @@ class ChatServiceValidationError(ValueError):
 
 @dataclass(slots=True, frozen=True)
 class ResolvedAgentConfig:
+    agent_name: str
     model: str
     task: str
     tools: list[ToolDefinition]
@@ -196,6 +197,7 @@ class ChatService:
         loaded_agent = self.agent_loader.load_agent(self.settings.DEFAULT_AGENT)
         default_model = f"openrouter:{self.settings.OPEN_ROUTER_LLM_MODEL}"
         base_config = ResolvedAgentConfig(
+            agent_name=loaded_agent.agent_name,
             model=loaded_agent.model or default_model,
             task=loaded_agent.system_prompt or "You are Manfred, a helpful assistant.",
             tools=list(loaded_agent.tools),
@@ -205,6 +207,7 @@ class ChatService:
             return base_config
 
         return ResolvedAgentConfig(
+            agent_name=base_config.agent_name,
             model=request_config.model or base_config.model,
             task=request_config.task or base_config.task,
             tools=self._resolve_tools(request_config.tools) if request_config.tools is not None else base_config.tools,
@@ -246,6 +249,7 @@ class ChatService:
             if agent is None:
                 raise RuntimeError(f"Session integrity error: root agent not found: {session.root_agent_id}")
 
+            agent.agent_name = config.agent_name
             agent.config = agent_config
             agent.status = AgentStatus.PENDING
             agent.updated_at = now
@@ -258,6 +262,7 @@ class ChatService:
             root_agent_id=agent_id,
             parent_id=None,
             depth=0,
+            agent_name=config.agent_name,
             status=AgentStatus.PENDING,
             turn_count=0,
             config=agent_config,

@@ -19,6 +19,7 @@ class AgentModel(Base):
     root_agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    agent_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     model: Mapped[str] = mapped_column(String(255), nullable=False)
     task: Mapped[str] = mapped_column(Text, nullable=False)
