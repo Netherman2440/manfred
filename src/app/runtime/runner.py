@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Literal
@@ -23,6 +24,8 @@ from app.events import (
     build_event_context,
 )
 from app.providers import (
+    ProviderDoneEvent,
+    ProviderErrorEvent,
     ProviderFunctionCallInputItem,
     ProviderFunctionCallOutputInputItem,
     ProviderFunctionCallOutputItem,
@@ -30,6 +33,7 @@ from app.providers import (
     ProviderRegistry,
     ProviderRequest,
     ProviderResponse,
+    ProviderStreamEvent,
     ProviderTextOutputItem,
     ProviderUsage,
 )
@@ -51,6 +55,7 @@ class TurnResult:
     agent: Agent
     error: str | None = None
     usage: ProviderUsage | None = None
+    error_emitted: bool = False
 
 
 @dataclass(slots=True)
@@ -172,6 +177,149 @@ class Runner:
 
         return self._fail_run(context, error="Agent stopped unexpectedly.")
 
+    async def run_agent_stream(
+        self,
+        agent_id: str,
+        *,
+        max_turns: int = 10,
+        last_agent_sequence: int = 0,
+    ) -> AsyncIterable[ProviderStreamEvent]:
+        context = self.load_agent_context(
+            agent_id,
+            trace_id=uuid4().hex,
+            last_agent_sequence=last_agent_sequence,
+        )
+        if context.agent.status == AgentStatus.WAITING:
+            yield ProviderErrorEvent(error="Waiting agents are not implemented yet.")
+            return
+
+        context.agent.status = AgentStatus.RUNNING
+        context.agent.updated_at = utcnow()
+        context.agent = self.agent_repository.save(context.agent)
+        run_started_at = utcnow()
+        total_usage = ProviderUsage()
+
+        self.event_bus.emit(
+            AgentStartedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                model=context.agent.config.model,
+                task=context.agent.config.task,
+                agent_name=context.agent.agent_name,
+                user_id=context.session.user_id,
+                user_input=self._find_run_user_input(context),
+            )
+        )
+
+        turns_executed = 0
+
+        while context.agent.status == AgentStatus.RUNNING:
+            if turns_executed >= max_turns:
+                result = self._fail_run(context, error="Agent exceeded max_turns.")
+                yield ProviderErrorEvent(error=result.error or "Agent exceeded max_turns.")
+                return
+
+            self.event_bus.emit(
+                TurnStartedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    turn_count=context.agent.turn_count,
+                )
+            )
+
+            resolved = self.provider_registry.resolve(context.agent.config.model)
+            if resolved is None:
+                turn_result = TurnResult(
+                    status="failed",
+                    agent=context.agent,
+                    error=f"Unknown provider or model reference: {context.agent.config.model}",
+                )
+            else:
+                request_input, request = self._build_provider_request(context, model=resolved.model)
+                generation_started_at = utcnow()
+                generation_timer_started_at = perf_counter()
+                response: ProviderResponse | None = None
+                turn_result = None
+
+                try:
+                    async for event in resolved.provider.stream(request):
+                        yield event
+                        if isinstance(event, ProviderDoneEvent):
+                            response = event.response
+                        elif isinstance(event, ProviderErrorEvent):
+                            turn_result = TurnResult(
+                                status="failed",
+                                agent=context.agent,
+                                error=event.error,
+                                error_emitted=True,
+                            )
+                            break
+                except Exception as exc:
+                    turn_result = TurnResult(
+                        status="failed",
+                        agent=context.agent,
+                        error=str(exc) or "Provider call failed.",
+                    )
+
+                if turn_result is None:
+                    if response is None:
+                        turn_result = TurnResult(
+                            status="failed",
+                            agent=context.agent,
+                            error="Provider stream ended without a final response.",
+                        )
+                    else:
+                        self._emit_generation_completed_event(
+                            context,
+                            model=resolved.model,
+                            request=request,
+                            response=response,
+                            generation_started_at=generation_started_at,
+                            generation_timer_started_at=generation_timer_started_at,
+                        )
+                        turn_result = await self.handle_turn_response(context, response)
+
+            context.agent = turn_result.agent
+            total_usage = self._add_usage(total_usage, turn_result.usage)
+
+            if turn_result.status != "failed":
+                self.event_bus.emit(
+                    TurnCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        turn_count=context.agent.turn_count,
+                        usage=turn_result.usage,
+                    )
+                )
+
+            context.agent.turn_count += 1
+            context.agent.updated_at = utcnow()
+            context.agent = self.agent_repository.save(context.agent)
+            turns_executed += 1
+
+            if turn_result.status == "continue":
+                context = self.reload_context(context)
+                continue
+
+            if turn_result.status == "completed":
+                self.event_bus.emit(
+                    AgentCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        duration_ms=self._duration_ms(run_started_at),
+                        usage=total_usage,
+                        result=self._find_run_result(context),
+                    )
+                )
+                return
+
+            result = self._fail_run(
+                context,
+                error=turn_result.error or "Agent execution failed.",
+            )
+            if not turn_result.error_emitted:
+                yield ProviderErrorEvent(error=result.error or "Agent execution failed.")
+            return
+
+        result = self._fail_run(context, error="Agent stopped unexpectedly.")
+        yield ProviderErrorEvent(error=result.error or "Agent stopped unexpectedly.")
+
     async def execute_turn(self, context: AgentRunContext) -> TurnResult:
         resolved = self.provider_registry.resolve(context.agent.config.model)
         if resolved is None:
@@ -181,14 +329,7 @@ class Runner:
                 error=f"Unknown provider or model reference: {context.agent.config.model}",
             )
 
-        request_input = self.map_items_to_provider_input(context.items)
-        request = ProviderRequest(
-            model=resolved.model,
-            instructions=context.agent.config.task,
-            input=request_input,
-            tools=context.agent.config.tools or [],
-            temperature=context.agent.config.temperature,
-        )
+        request_input, request = self._build_provider_request(context, model=resolved.model)
         generation_started_at = utcnow()
         generation_timer_started_at = perf_counter()
 
@@ -197,21 +338,16 @@ class Runner:
         except Exception as exc:
             return TurnResult(status="failed", agent=context.agent, error=str(exc) or "Provider call failed.")
 
-        self.event_bus.emit(
-            GenerationCompletedEvent(
-                ctx=build_event_context(context.agent, context.trace_id),
-                model=resolved.model,
-                instructions=request.instructions,
-                input=request_input,
-                output=response.output,
-                usage=response.usage,
-                duration_ms=self._duration_ms(generation_started_at, generation_timer_started_at),
-                start_time=generation_started_at,
-            )
+        self._emit_generation_completed_event(
+            context,
+            model=resolved.model,
+            request=request,
+            response=response,
+            generation_started_at=generation_started_at,
+            generation_timer_started_at=generation_timer_started_at,
         )
 
         return await self.handle_turn_response(context, response)
-
     async def handle_turn_response(
         self,
         context: AgentRunContext,
@@ -508,6 +644,48 @@ class Runner:
             agent=context.agent,
             error=error,
         )
+
+    def _emit_generation_completed_event(
+        self,
+        context: AgentRunContext,
+        *,
+        model: str,
+        request: ProviderRequest,
+        response: ProviderResponse,
+        generation_started_at: object,
+        generation_timer_started_at: float,
+    ) -> None:
+        self.event_bus.emit(
+            GenerationCompletedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                model=model,
+                instructions=request.instructions,
+                input=request.input,
+                output=response.output,
+                usage=response.usage,
+                duration_ms=self._duration_ms(generation_started_at, generation_timer_started_at),
+                start_time=generation_started_at,
+            )
+        )
+
+    def _build_provider_request(
+        self,
+        context: AgentRunContext,
+        *,
+        model: str,
+    ) -> tuple[
+        list[ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem],
+        ProviderRequest,
+    ]:
+        request_input = self.map_items_to_provider_input(context.items)
+        request = ProviderRequest(
+            model=model,
+            instructions=context.agent.config.task,
+            input=request_input,
+            tools=context.agent.config.tools or [],
+            temperature=context.agent.config.temperature,
+        )
+        return request_input, request
 
     @staticmethod
     def _add_usage(total: ProviderUsage, usage: ProviderUsage | None) -> ProviderUsage:

@@ -2,7 +2,11 @@ from app.providers.base import Provider
 from app.providers.openrouter_provider import OpenRouterProvider, OpenRouterProviderError
 from app.providers.registry import ProviderRegistry, ResolvedProvider
 from app.providers.types import (
+    ProviderDoneEvent,
+    ProviderErrorEvent,
     ProviderFunctionCallInputItem,
+    ProviderFunctionCallDeltaEvent,
+    ProviderFunctionCallDoneEvent,
     ProviderFunctionCallOutputInputItem,
     ProviderFunctionCallOutputItem,
     ProviderInputItem,
@@ -10,15 +14,24 @@ from app.providers.types import (
     ProviderOutputItem,
     ProviderRequest,
     ProviderResponse,
+    ProviderStreamEvent,
+    ProviderTextDeltaEvent,
+    ProviderTextDoneEvent,
     ProviderTextOutputItem,
     ProviderUsage,
+    serialize_provider_response,
+    serialize_provider_stream_event,
 )
 
 __all__ = [
     "OpenRouterProvider",
     "OpenRouterProviderError",
     "Provider",
+    "ProviderDoneEvent",
+    "ProviderErrorEvent",
     "ProviderFunctionCallInputItem",
+    "ProviderFunctionCallDeltaEvent",
+    "ProviderFunctionCallDoneEvent",
     "ProviderFunctionCallOutputInputItem",
     "ProviderFunctionCallOutputItem",
     "ProviderInputItem",
@@ -27,7 +40,12 @@ __all__ = [
     "ProviderRegistry",
     "ProviderRequest",
     "ProviderResponse",
+    "ProviderStreamEvent",
+    "ProviderTextDeltaEvent",
+    "ProviderTextDoneEvent",
     "ProviderTextOutputItem",
     "ProviderUsage",
     "ResolvedProvider",
+    "serialize_provider_response",
+    "serialize_provider_stream_event",
 ]

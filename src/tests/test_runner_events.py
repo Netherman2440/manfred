@@ -23,9 +23,15 @@ from app.domain.repositories import AgentRepository, ItemRepository, SessionRepo
 from app.events import EventBus
 from app.providers import (
     Provider,
+    ProviderDoneEvent,
+    ProviderFunctionCallDeltaEvent,
+    ProviderFunctionCallDoneEvent,
     ProviderFunctionCallOutputItem,
     ProviderRegistry,
     ProviderResponse,
+    ProviderStreamEvent,
+    ProviderTextDeltaEvent,
+    ProviderTextDoneEvent,
     ProviderTextOutputItem,
     ProviderUsage,
 )
@@ -34,13 +40,31 @@ from app.tools.registry import ToolRegistry
 
 
 class FakeProvider(Provider):
-    def __init__(self, responses: list[ProviderResponse]) -> None:
+    def __init__(
+        self,
+        responses: list[ProviderResponse],
+        stream_events: list[list[ProviderStreamEvent]] | None = None,
+    ) -> None:
         self._responses = responses
+        self._stream_events = stream_events or []
 
     async def generate(self, request_data):  # noqa: ANN001
         if not self._responses:
             raise RuntimeError("No fake response left.")
         return self._responses.pop(0)
+
+    async def stream(self, request_data):  # noqa: ANN001
+        del request_data
+        if self._stream_events:
+            for event in self._stream_events.pop(0):
+                yield event
+            return
+
+        if not self._responses:
+            raise RuntimeError("No fake response left.")
+
+        response = self._responses.pop(0)
+        yield ProviderDoneEvent(response=response)
 
 
 @pytest.fixture
@@ -67,6 +91,7 @@ def make_runner(
     db_session: Session,
     *,
     provider_responses: list[ProviderResponse],
+    provider_streams: list[list[ProviderStreamEvent]] | None = None,
     tools: list[Tool],
     model: str = "openrouter:test-model",
 ) -> tuple[Runner, str, list[str]]:
@@ -135,7 +160,14 @@ def make_runner(
         session_repository=session_repository,
         item_repository=item_repository,
         tool_registry=ToolRegistry(tools=tools),
-        provider_registry=ProviderRegistry({"openrouter": FakeProvider(list(provider_responses))}),
+        provider_registry=ProviderRegistry(
+            {
+                "openrouter": FakeProvider(
+                    list(provider_responses),
+                    stream_events=list(provider_streams or []),
+                )
+            }
+        ),
         event_bus=event_bus,
     )
     return runner, agent.id, event_types
@@ -236,6 +268,142 @@ async def test_runner_emits_agent_failed_for_unknown_provider(db_session: Sessio
         "agent.started",
         "turn.started",
         "agent.failed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_emits_text_events_and_persists_output(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        provider_streams=[
+            [
+                ProviderTextDeltaEvent(delta="Final "),
+                ProviderTextDeltaEvent(delta="answer"),
+                ProviderTextDoneEvent(text="Final answer"),
+                ProviderDoneEvent(
+                    response=ProviderResponse(
+                        output=[ProviderTextOutputItem(text="Final answer")],
+                        usage=ProviderUsage(input_tokens=10, output_tokens=5, total_tokens=15),
+                    )
+                ),
+            ]
+        ],
+        tools=[],
+    )
+
+    events = [event async for event in runner.run_agent_stream(agent_id, last_agent_sequence=0)]
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert [event.type for event in events] == [
+        "text_delta",
+        "text_delta",
+        "text_done",
+        "done",
+    ]
+    assert stored_items[-1].content == "Final answer"
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_continues_after_tool_call(db_session: Session) -> None:
+    async def calculator(arguments: dict[str, object], signal: object | None) -> dict[str, object]:
+        del signal
+        return {"ok": True, "output": f"{arguments['value']}"}
+
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        provider_streams=[
+            [
+                ProviderFunctionCallDeltaEvent(
+                    call_id="call-1",
+                    name="calculator",
+                    arguments_delta='{"value":',
+                ),
+                ProviderFunctionCallDeltaEvent(
+                    call_id="call-1",
+                    name="calculator",
+                    arguments_delta=" 7}",
+                ),
+                ProviderFunctionCallDoneEvent(
+                    call_id="call-1",
+                    name="calculator",
+                    arguments={"value": 7},
+                ),
+                ProviderDoneEvent(
+                    response=ProviderResponse(
+                        output=[
+                            ProviderFunctionCallOutputItem(
+                                call_id="call-1",
+                                name="calculator",
+                                arguments={"value": 7},
+                            )
+                        ],
+                        usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+                        finish_reason="tool_calls",
+                    )
+                ),
+            ],
+            [
+                ProviderTextDeltaEvent(delta="Recovered answer"),
+                ProviderTextDoneEvent(text="Recovered answer"),
+                ProviderDoneEvent(
+                    response=ProviderResponse(
+                        output=[ProviderTextOutputItem(text="Recovered answer")],
+                        usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+                    )
+                ),
+            ],
+        ],
+        tools=[
+            Tool(
+                type="sync",
+                definition=FunctionToolDefinition(
+                    name="calculator",
+                    description="Calculator",
+                    parameters={"type": "object"},
+                ),
+                handler=calculator,
+            )
+        ],
+    )
+
+    events = [event async for event in runner.run_agent_stream(agent_id, last_agent_sequence=0)]
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert [event.type for event in events] == [
+        "function_call_delta",
+        "function_call_delta",
+        "function_call_done",
+        "done",
+        "text_delta",
+        "text_done",
+        "done",
+    ]
+    assert [item.type.value for item in stored_items[1:]] == [
+        "function_call",
+        "function_call_output",
+        "message",
+    ]
+    assert stored_items[-1].content == "Recovered answer"
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "tool.called",
+        "tool.completed",
+        "turn.completed",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
     ]
 
 
