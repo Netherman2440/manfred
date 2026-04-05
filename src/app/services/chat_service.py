@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -36,6 +38,7 @@ from app.domain import (
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
+from app.providers import ProviderErrorEvent, ProviderStreamEvent
 
 
 class ChatServiceValidationError(ValueError):
@@ -108,10 +111,25 @@ class ChatService:
             self.session.rollback()
             raise
 
-    async def prepare_chat(self, chat_request: ChatRequest) -> PreparedChatSetupResult:
-        if chat_request.stream:
-            return PreparedChatSetupResult(ok=False, error="Streaming is not implemented yet.")
+    async def process_chat_stream(self, chat_request: ChatRequest) -> AsyncIterable[ProviderStreamEvent]:
+        try:
+            setup = await self.prepare_chat(chat_request)
+            if not setup.ok or setup.value is None:
+                yield ProviderErrorEvent(error=setup.error or "Chat setup failed.")
+                return
 
+            self.session.flush()
+            async for event in self.stream_prepared_chat(setup.value):
+                yield event
+            self.session.commit()
+        except asyncio.CancelledError:
+            self.session.rollback()
+            raise
+        except Exception as exc:
+            self.session.rollback()
+            yield ProviderErrorEvent(error=str(exc) or "Chat streaming failed.")
+
+    async def prepare_chat(self, chat_request: ChatRequest) -> PreparedChatSetupResult:
         try:
             user = self._ensure_default_user() #TODO: Get real user
             session = self._load_session(chat_request.session_id, user.id)
@@ -130,6 +148,16 @@ class ChatService:
                 last_sequence=last_sequence,
             ),
         )
+
+    async def stream_prepared_chat(
+        self,
+        setup: PreparedChatSetup,
+    ) -> AsyncIterable[ProviderStreamEvent]:
+        async for event in self.runner.run_agent_stream(
+            setup.agent.id,
+            last_agent_sequence=setup.last_sequence,
+        ):
+            yield event
 
     async def execute_chat(
         self,
