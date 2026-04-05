@@ -12,5 +12,5 @@ class Provider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def stream(self, request: ProviderRequest) -> AsyncIterable[ProviderStreamEvent]:
+    async def stream(self, request: ProviderRequest) -> AsyncIterable[ProviderStreamEvent]:
         raise NotImplementedError

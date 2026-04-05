@@ -329,7 +329,7 @@ class Runner:
                 error=f"Unknown provider or model reference: {context.agent.config.model}",
             )
 
-        request_input, request = self._build_provider_request(context, model=resolved.model)
+        _request_input, request = self._build_provider_request(context, model=resolved.model)
         generation_started_at = utcnow()
         generation_timer_started_at = perf_counter()
 
