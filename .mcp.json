@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "files": {
+      "transport": "stdio",
+      "command": "bash",
+      "args": [
+        "-lc",
+        "mkdir -p /tmp/files-mcp-dist && cd /home/netherman/code/4th-devs/mcp/files-mcp && npx tsc --outDir /tmp/files-mcp-dist --noEmitOnError false >/tmp/files-mcp-build.log 2>&1; cp package.json /tmp/files-mcp-dist/package.json; ln -sfn \"$PWD/node_modules\" /tmp/files-mcp-dist/node_modules; exec node /tmp/files-mcp-dist/index.js"
+      ],
+      "env": {
+        "FS_ROOTS": "/home/netherman/code/manfred/.agent_data/agents, /home/netherman/code/manfred/.agent_data/shared, /home/netherman/code/manfred/.agent_data/skills, /home/netherman/code/manfred/.agent_data/workflows, /home/netherman/code/manfred/.agent_data/workspaces"
+      },
+      "cwd": "/home/netherman/code/manfred"
+    }
+  }
+}

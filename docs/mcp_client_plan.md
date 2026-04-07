@@ -288,6 +288,389 @@ Powod:
 - nie jest potrzebne, zeby odblokowac `files-mcp`,
 - istotnie komplikuje lifecycle i testy end-to-end.
 
+## Etap 2. Rozwoj pod zewnetrzne MCP-y typu Google Maps i Google Calendar
+
+Po MVP ze `stdio + files-mcp` kolejny sensowny krok to nie "dodac dowolny transport HTTP", tylko zbudowac warstwe, ktora nadaje sie do serwerow:
+
+- zdalnych,
+- per-user,
+- wymagajacych OAuth,
+- majacych kosztowne albo potencjalnie niebezpieczne akcje.
+
+To jest istotnie inny problem niz lokalny `files-mcp`, bo dochodza:
+
+- credentials zalezne od uzytkownika,
+- scope'y OAuth,
+- rozne poziomy ryzyka operacji,
+- potrzeba potwierdzenia przed zapisem albo wysylka,
+- duzo bardziej zmienny stan polaczenia.
+
+### Cel etapu 2
+
+Na koniec tego etapu `manfred` powinien umiec:
+
+- podpiac zdalny serwer MCP po HTTP,
+- rozpoznac, czy serwer jest globalny czy user-scoped,
+- przeprowadzic flow OAuth dla konkretnego uzytkownika,
+- trzymac tokeny poza `.mcp.json`,
+- wystawic status polaczenia per serwer i per user,
+- odpalac toole typu `maps__search_places` albo `calendar__create_event`,
+- rozrozniac operacje read-only i write,
+- dla operacji write umiec wejsc w `waiting` albo wymagac explicit confirmation.
+
+### Docelowe typy integracji
+
+Warto od razu rozroznic trzy klasy MCP:
+
+#### 1. Local sandbox MCP
+
+Przyklady:
+
+- `files-mcp`
+- lokalne indeksy wiedzy
+- lokalne narzedzia developerskie
+
+Charakterystyka:
+
+- najczesciej `stdio`,
+- wspolne dla calej instancji aplikacji,
+- bez kont uzytkownikow,
+- niskie wymagania auth.
+
+#### 2. Shared remote MCP
+
+Przyklady:
+
+- wewnetrzny serwer firmowy do wyszukiwania dokumentacji,
+- remote MCP z read-only danymi produktowymi,
+- Google Maps przez jedno konto serwisowe, jesli use case jest publiczny i tylko do odczytu.
+
+Charakterystyka:
+
+- najczesciej HTTP,
+- jedno polaczenie lub jedna konfiguracja dla calego backendu,
+- sekrety trzymane po stronie serwera.
+
+#### 3. User-scoped remote MCP
+
+Przyklady:
+
+- Google Calendar konkretnego usera,
+- Gmail,
+- Notion,
+- Slack,
+- Google Maps, jesli zapytania albo historia maja byc atrybuowane per user lub rozliczane osobno.
+
+Charakterystyka:
+
+- auth i tokeny per user,
+- czesto OAuth,
+- status polaczenia zalezy od usera, nie od calej aplikacji,
+- potrzebne potwierdzenia i lepszy audyt.
+
+To rozroznienie warto wprowadzic od razu do architektury, bo bez tego `calendar` i `maps` szybko wymusza przerabianie calego MCP.
+
+## Zmiany architektoniczne potrzebne w etapie 2
+
+### 1. Rozdzielenie konfiguracji serwera od stanu autoryzacji
+
+`.mcp.json` powinno opisywac:
+
+- jakie serwery sa dostepne,
+- jaki maja transport,
+- czy sa `shared` czy `user_scoped`,
+- czy wspieraja OAuth,
+- jakie maja wymagane scope'y,
+- czy dany serwer jest `read_only`, `mixed`, czy `write_capable`.
+
+Przykladowy kierunek:
+
+```json
+{
+  "mcpServers": {
+    "maps": {
+      "transport": "http",
+      "url": "https://mcp.example.com/maps",
+      "auth": {
+        "mode": "oauth",
+        "scopes": [
+          "maps.read"
+        ]
+      },
+      "ownership": "shared",
+      "capabilityMode": "read_only"
+    },
+    "calendar": {
+      "transport": "http",
+      "url": "https://mcp.example.com/calendar",
+      "auth": {
+        "mode": "oauth",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar.events"
+        ]
+      },
+      "ownership": "user_scoped",
+      "capabilityMode": "mixed"
+    }
+  }
+}
+```
+
+Natomiast tokeny i stan sesji OAuth nie powinny byc trzymane w `.mcp.json`.
+
+### 2. Nowy persistence layer dla auth MCP
+
+Do integracji z Google Calendar i podobnymi serwisami potrzebny bedzie nowy model trwalosci, np.:
+
+- `McpConnection`
+- `McpCredential`
+
+Minimalne pola:
+
+- `id`
+- `user_id`
+- `server_name`
+- `status`
+- `access_token_encrypted`
+- `refresh_token_encrypted`
+- `scopes`
+- `expires_at`
+- `created_at`
+- `updated_at`
+
+Wazne decyzje:
+
+- tokenow nie trzymac plain textem,
+- najlepiej trzymac je szyfrowane kluczem z env,
+- status polaczenia ma byc per user i per server.
+
+### 3. `McpManager` musi stac sie context-aware
+
+W MVP manager moze byc globalnym singletonem.
+W etapie 2 to juz nie wystarczy.
+
+Potrzebny kierunek:
+
+```python
+async def list_tools_for_user(user_id: str) -> list[McpToolInfo]: ...
+async def call_tool_for_user(
+    user_id: str,
+    prefixed_name: str,
+    arguments: dict[str, object],
+    signal: object | None = None,
+) -> str: ...
+```
+
+Powod:
+
+- `calendar` moze byc dostepny dla jednego usera, a dla drugiego nie,
+- ten sam serwer moze miec inny status auth dla roznych userow,
+- `Runner` musi wiedziec, czy moze wykonac tool od razu, czy ma zwrocic stan `auth_required`.
+
+### 4. `ChatService` i `Runner` musza znac prawdziwego usera
+
+Dzis `ChatService` uzywa default usera.
+Przed sensownym etapem 2 trzeba to zmienic, bo:
+
+- OAuth do kalendarza musi byc przypisany do konkretnego usera,
+- audyt wywolan `calendar__create_event` bez `user_id` jest bezuzyteczny,
+- nie da sie poprawnie odroznic "serwer niepolaczony" od "ten user nieautoryzowany".
+
+To oznacza, ze drugi etap MCP praktycznie zaklada rownolegle domkniecie auth usera w API.
+
+### 5. Potrzebny katalog polityk bezpieczenstwa dla tooli
+
+Dla `files-mcp` wystarcza sandbox.
+Dla `calendar` i podobnych integracji to za malo.
+
+Warto dodac metadata per tool albo per server:
+
+- `risk_level`: `low`, `medium`, `high`
+- `mode`: `read`, `write`
+- `confirmation_required`: `true/false`
+
+Przyklady:
+
+- `maps__search_places` -> `read`, `low`, bez confirmation
+- `calendar__list_events` -> `read`, `low`, bez confirmation
+- `calendar__create_event` -> `write`, `medium`, confirmation required
+- `calendar__delete_event` -> `write`, `high`, confirmation required
+
+To mozna trzymac:
+
+- w `.mcp.json`,
+- albo w osobnym lokalnym rejestrze polityk po stronie `manfreda`.
+
+Druga opcja jest praktyczniejsza, bo nie wymaga, zeby zewnetrzny serwer MCP opisywal ryzyko w dokladnie takim modelu jak backend.
+
+## Plan implementacji etapu 2
+
+### 2.1. Dodac modele i repozytoria MCP auth
+
+Zakres:
+
+- nowa tabela na polaczenia i tokeny MCP,
+- repozytorium odczytu i zapisu credentials,
+- warstwa szyfrowania tokenow.
+
+Kryterium akceptacji:
+
+- backend umie zapisac i odczytac token dla `calendar`,
+- token nie jest przechowywany jawnym tekstem.
+
+### 2.2. Dodac HTTP transport do `app/mcp`
+
+Zakres:
+
+- klient streamable HTTP,
+- timeouty i retry policy,
+- rozroznienie `connected`, `auth_required`, `disconnected`, `error`.
+
+Kryterium akceptacji:
+
+- manager laczy sie z serwerem remote MCP,
+- bledy auth nie sa raportowane jako zwykle `disconnected`.
+
+### 2.3. Dodac OAuth flow per user
+
+Zakres:
+
+- endpoint startujacy auth dla usera i serwera,
+- callback konczacy auth,
+- zapis tokenow,
+- reconnect klienta po zakonczeniu auth.
+
+Minimalne endpointy:
+
+- `GET /api/v1/mcp/servers`
+- `GET /api/v1/mcp/{server}/auth`
+- `GET /api/v1/mcp/{server}/callback`
+
+W odpowiedzi `servers` warto zwracac:
+
+- `server`
+- `ownership`
+- `status`
+- `requiresAuth`
+- `connectedForUser`
+
+Kryterium akceptacji:
+
+- user moze podpiac swoje konto Google Calendar,
+- po callbacku status serwera dla tego usera zmienia sie na `connected`.
+
+### 2.4. Dodac `auth_required` jako stan wykonywania toola
+
+Przyklad:
+
+- agent chce uzyc `calendar__create_event`,
+- user nie ma autoryzacji,
+- runner nie powinien failowac bezpowrotnie,
+- powinien zwrocic kontrolowany stan oczekiwania z instrukcja, ze trzeba przejsc przez auth.
+
+To oznacza, ze na tym etapie warto dopiac tez brakujace u Ciebie mechanizmy:
+
+- `waiting`
+- `deliver`
+- resume po dostarczeniu wyniku albo po zakonczeniu auth
+
+Bez tego integracje user-scoped beda dzialac topornie.
+
+### 2.5. Dodac confirmation flow dla operacji write
+
+To jest szczegolnie wazne dla:
+
+- kalendarza,
+- maili,
+- CRM,
+- task managerow.
+
+Rekomendowany model:
+
+- tool `read` wykonuje sie od razu,
+- tool `write` najpierw daje plan akcji,
+- backend przechodzi do `waiting`,
+- user potwierdza,
+- dopiero wtedy runner wykonuje write przez MCP.
+
+To spina sie naturalnie z juz planowanym u Ciebie mechanizmem human-in-the-loop.
+
+### 2.6. Dodac audyt i observability MCP per user
+
+Dla remote MCP potrzebny jest mocniejszy audyt niz dla `files-mcp`.
+
+Minimalnie logowac:
+
+- `user_id`
+- `server`
+- `tool`
+- argument preview bez danych wrazliwych
+- start i czas wykonania
+- wynik `success/failure/auth_required/confirmation_required`
+
+Przy `calendar__create_event` dobrze miec mozliwosc odpowiedzi na pytanie:
+
+- kto uruchomil akcje,
+- z jakiego agenta,
+- kiedy,
+- z jakim wynikiem.
+
+### 2.7. Dodac katalog przykladowych integracji
+
+Na poziomie docs warto przygotowac docelowo osobne playbooki:
+
+- `docs/mcp_google_maps_plan.md`
+- `docs/mcp_google_calendar_plan.md`
+
+Bo te integracje beda sie roznic nie tyle technicznie transportem, co polityka bezpieczenstwa i UX.
+
+## Jak to zastosowac do Google Maps i Google Calendar
+
+### Google Maps
+
+Najrozsadniejszy pierwszy wariant:
+
+- tylko read-only,
+- ownership `shared`,
+- bez confirmation,
+- uzycie do wyszukiwania miejsc, adresow, ETA, geocodingu.
+
+Plan:
+
+1. podpiac remote MCP `maps`
+2. dodac polityki `read_only`
+3. wystawic toole typu:
+   - `maps__search_places`
+   - `maps__get_place_details`
+   - `maps__estimate_route`
+4. pozwolic agentowi wykonywac je synchronicznie bez `waiting`
+
+To jest dobry pierwszy remote MCP, bo nie zmienia stanu zewnetrznego systemu.
+
+### Google Calendar
+
+Najrozsadniejszy pierwszy wariant:
+
+- ownership `user_scoped`,
+- OAuth per user,
+- osobne rozroznienie read vs write,
+- confirmation dla create/update/delete.
+
+Plan:
+
+1. podpiac remote MCP `calendar`
+2. dodac OAuth i storage tokenow
+3. zaczac od tooli read:
+   - `calendar__list_events`
+   - `calendar__find_free_slots`
+4. dopiero potem dolozyc write:
+   - `calendar__create_event`
+   - `calendar__update_event`
+   - `calendar__delete_event`
+5. write od razu spinac z confirmation flow
+
+To jest bezpieczniejsza kolejnosc niz wrzucenie od razu pelnego CRUD.
+
 ## Proponowana kolejnosc zmian w repo
 
 Najmniej ryzykowna kolejnosc PR-ow:
@@ -298,6 +681,11 @@ Najmniej ryzykowna kolejnosc PR-ow:
 4. integracja `Runner`
 5. dokumentacja `.mcp.json` i przykladowy config
 6. opcjonalnie endpointy `/api/v1/mcp/*`
+7. modele `McpConnection` i storage tokenow
+8. HTTP transport i statusy `auth_required`
+9. OAuth callback flow per user
+10. confirmation flow dla tooli write
+11. pierwsze integracje remote: `maps` read-only, potem `calendar` read-only, na koncu `calendar` write
 
 ## Decyzje projektowe, ktore warto przyjac od razu
 

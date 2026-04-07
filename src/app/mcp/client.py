@@ -297,43 +297,17 @@ class _StdioMcpSession:
         if stdin is None:
             raise McpClientError(f"MCP server '{self.server_name}' stdin is not available.")
 
-        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
-        header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-        stdin.write(header + body)
+        body = (json.dumps(payload, ensure_ascii=True) + "\n").encode("utf-8")
+        stdin.write(body)
         await stdin.drain()
 
     async def _read_message(self, stdout: asyncio.StreamReader) -> dict[str, Any]:
-        headers: dict[str, str] = {}
-
-        while True:
-            line = await stdout.readline()
-            if not line:
-                raise McpClientError(f"MCP server '{self.server_name}' closed the stream.")
-
-            decoded = line.decode("ascii", errors="replace").strip()
-            if not decoded:
-                break
-
-            if ":" not in decoded:
-                raise McpClientError(f"MCP server '{self.server_name}' sent invalid header line: {decoded}")
-
-            key, value = decoded.split(":", 1)
-            headers[key.lower().strip()] = value.strip()
-
-        content_length = headers.get("content-length")
-        if content_length is None:
-            raise McpClientError(f"MCP server '{self.server_name}' omitted Content-Length header.")
+        line = await stdout.readline()
+        if not line:
+            raise McpClientError(f"MCP server '{self.server_name}' closed the stream.")
 
         try:
-            size = int(content_length)
-        except ValueError as exc:
-            raise McpClientError(
-                f"MCP server '{self.server_name}' sent invalid Content-Length header."
-            ) from exc
-
-        body = await stdout.readexactly(size)
-        try:
-            payload = json.loads(body.decode("utf-8"))
+            payload = json.loads(line.decode("utf-8"))
         except json.JSONDecodeError as exc:
             raise McpClientError(f"MCP server '{self.server_name}' sent invalid JSON.") from exc
 
