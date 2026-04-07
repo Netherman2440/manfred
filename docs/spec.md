@@ -20,6 +20,7 @@ Statusy używane w planie: `todo`, `in progress`, `done`.
    utworzyć `PreparedChat`, ładować `agent config` z kontenera, wyznaczać `tools` na podstawie konfiguracji agenta, budować `agent input` tak, aby system prompt nie trafiał do sesji, trzymać `task` w konfiguracji agenta i na razie ładować samą sesję bez itemów.
 8. `in progress` Kolejny krok został rozbity na dwa etapy:
    szczegółowy plan etapu `api + chat_service` jest w `docs/chat_service_plan.md`, a plan pętli wykonywania agenta w `runner.py` jest w `docs/runner_plan.md`.
+9. `todo` Szczegółowy plan wdrożenia MCP clienta i integracji z `files-mcp` jest w `docs/mcp_client_plan.md`.
 
 ## Cel dokumentu
 

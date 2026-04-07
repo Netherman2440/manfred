@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.domain import FunctionToolDefinition, ToolDefinition, WebSearchToolDefinition
+from app.mcp import McpManager, parse_mcp_tool_name
 from app.tools.registry import ToolRegistry
 
 
 AGENT_EXTENSION = ".agent.md"
+logger = logging.getLogger("app.services.agent_loader")
 
 
 @dataclass(slots=True, frozen=True)
@@ -27,8 +30,15 @@ class LoadedAgent:
 
 
 class AgentLoader:
-    def __init__(self, *, tool_registry: ToolRegistry, repo_root: Path) -> None:
+    def __init__(
+        self,
+        *,
+        tool_registry: ToolRegistry,
+        mcp_manager: McpManager,
+        repo_root: Path,
+    ) -> None:
         self.tool_registry = tool_registry
+        self.mcp_manager = mcp_manager
         self.repo_root = repo_root
 
     def load_agent(self, agent_path: str | Path) -> LoadedAgent:
@@ -79,6 +89,23 @@ class AgentLoader:
             tool = registered_tools.get(tool_name)
             if tool is not None:
                 resolved.append(tool)
+                continue
+
+            if parse_mcp_tool_name(tool_name) is None:
+                continue
+
+            mcp_tool = self.mcp_manager.get_tool(tool_name)
+            if mcp_tool is None:
+                logger.warning("mcp tool not found during agent load tool=%s", tool_name)
+                continue
+
+            resolved.append(
+                FunctionToolDefinition(
+                    name=mcp_tool.prefixed_name,
+                    description=mcp_tool.description,
+                    parameters=mcp_tool.input_schema,
+                )
+            )
 
         return resolved
 

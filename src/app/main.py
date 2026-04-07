@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         event_bus = container.event_bus()
+        mcp_manager = container.mcp_manager()
         unsubscribe_logger = subscribe_event_logger(event_bus)
         langfuse_subscriber = container.langfuse_subscriber()
         unsubscribe_langfuse = (
@@ -28,8 +29,10 @@ def create_app() -> FastAPI:
             else (lambda: None)
         )
         try:
+            await mcp_manager.start()
             yield
         finally:
+            await mcp_manager.close()
             unsubscribe_langfuse()
             if langfuse_subscriber is not None:
                 langfuse_subscriber.shutdown()

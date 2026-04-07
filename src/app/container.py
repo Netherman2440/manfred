@@ -10,6 +10,7 @@ from app.config import Settings
 from app.domain import Tool
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
+from app.mcp import StdioMcpManager
 from app.observability import build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.runner import Runner
@@ -44,10 +45,29 @@ def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def build_mcp_manager(
+    *,
+    settings: Settings,
+    repo_root: Path,
+) -> StdioMcpManager:
+    config_path = Path(settings.MCP_CONFIG_PATH)
+    if not config_path.is_absolute():
+        config_path = repo_root / config_path
+
+    return StdioMcpManager(
+        repo_root=repo_root,
+        config_path=config_path.resolve(),
+        client_name="manfred",
+        client_version=settings.VERSION,
+        request_timeout_seconds=settings.MCP_TOOL_TIMEOUT_MS / 1000,
+    )
+
+
 def build_runner(
     *,
     session: Session,
     tool_registry: ToolRegistry,
+    mcp_manager: StdioMcpManager,
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
 ) -> Runner:
@@ -56,6 +76,7 @@ def build_runner(
         session_repository=SessionRepository(session),
         item_repository=ItemRepository(session),
         tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
     )
@@ -67,6 +88,7 @@ def build_chat_service(
     settings: Settings,
     agent_loader: AgentLoader,
     tool_registry: ToolRegistry,
+    mcp_manager: StdioMcpManager,
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
 ) -> ChatService:
@@ -86,6 +108,7 @@ def build_chat_service(
         runner=build_runner(
             session=session,
             tool_registry=tool_registry,
+            mcp_manager=mcp_manager,
             provider_registry=provider_registry,
             event_bus=event_bus,
         ),
@@ -125,9 +148,15 @@ class Container(containers.DeclarativeContainer):
         build_provider_registry,
         openrouter_provider=openrouter_provider,
     )
+    mcp_manager = providers.Singleton(
+        build_mcp_manager,
+        settings=settings,
+        repo_root=providers.Callable(get_repo_root),
+    )
     agent_loader = providers.Singleton(
         AgentLoader,
         tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
         repo_root=providers.Callable(get_repo_root),
     )
 
@@ -137,6 +166,7 @@ class Container(containers.DeclarativeContainer):
         settings=settings,
         agent_loader=agent_loader,
         tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
     )
