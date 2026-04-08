@@ -21,6 +21,7 @@ Statusy używane w planie: `todo`, `in progress`, `done`.
 8. `in progress` Kolejny krok został rozbity na dwa etapy:
    szczegółowy plan etapu `api + chat_service` jest w `docs/chat_service_plan.md`, a plan pętli wykonywania agenta w `runner.py` jest w `docs/runner_plan.md`.
 9. `todo` Szczegółowy plan wdrożenia MCP clienta i integracji z `files-mcp` jest w `docs/mcp_client_plan.md`.
+10. `todo` Szczegółowy plan wdrożenia tool types `agent` i `human` oraz narzędzi `delegate` i `ask_user` jest w `docs/agent_human_tools_plan.md`.
 
 ## Cel dokumentu
 
