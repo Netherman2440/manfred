@@ -21,6 +21,7 @@ from app.domain import (
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
+from app.mcp import McpToolInfo
 from app.providers import (
     Provider,
     ProviderDoneEvent,
@@ -67,6 +68,60 @@ class FakeProvider(Provider):
         yield ProviderDoneEvent(response=response)
 
 
+class FakeMcpManager:
+    def __init__(
+        self,
+        *,
+        tools: list[McpToolInfo] | None = None,
+        results: dict[str, str] | None = None,
+        errors: dict[str, str] | None = None,
+    ) -> None:
+        self._tools = {tool.prefixed_name: tool for tool in tools or []}
+        self._results = results or {}
+        self._errors = errors or {}
+
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+    def servers(self) -> list[str]:
+        return sorted({tool.server for tool in self._tools.values()})
+
+    def server_status(self, name: str) -> str:
+        return "connected" if name in self.servers() else "disconnected"
+
+    def parse_name(self, prefixed_name: str) -> tuple[str, str] | None:
+        if "__" not in prefixed_name:
+            return None
+        server_name, tool_name = prefixed_name.split("__", 1)
+        if not server_name or not tool_name:
+            return None
+        return server_name, tool_name
+
+    def list_tools(self) -> list[McpToolInfo]:
+        return list(self._tools.values())
+
+    def list_server_tools(self, server_name: str) -> list[McpToolInfo]:
+        return [tool for tool in self._tools.values() if tool.server == server_name]
+
+    def get_tool(self, prefixed_name: str) -> McpToolInfo | None:
+        return self._tools.get(prefixed_name)
+
+    async def call_tool(
+        self,
+        prefixed_name: str,
+        arguments: dict[str, object],
+        signal: object | None = None,
+    ) -> str:
+        del arguments
+        del signal
+        if prefixed_name in self._errors:
+            raise RuntimeError(self._errors[prefixed_name])
+        return self._results[prefixed_name]
+
+
 @pytest.fixture
 def db_session() -> Session:
     engine = create_engine("sqlite:///:memory:", future=True)
@@ -93,6 +148,7 @@ def make_runner(
     provider_responses: list[ProviderResponse],
     provider_streams: list[list[ProviderStreamEvent]] | None = None,
     tools: list[Tool],
+    mcp_manager: FakeMcpManager | None = None,
     model: str = "openrouter:test-model",
 ) -> tuple[Runner, str, list[str]]:
     user_repository = UserRepository(db_session)
@@ -160,6 +216,7 @@ def make_runner(
         session_repository=session_repository,
         item_repository=item_repository,
         tool_registry=ToolRegistry(tools=tools),
+        mcp_manager=mcp_manager or FakeMcpManager(),
         provider_registry=ProviderRegistry(
             {
                 "openrouter": FakeProvider(
@@ -268,6 +325,116 @@ async def test_runner_emits_agent_failed_for_unknown_provider(db_session: Sessio
         "agent.started",
         "turn.started",
         "agent.failed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_executes_mcp_tool_and_continues(db_session: Session) -> None:
+    mcp_tool = McpToolInfo(
+        server="files",
+        original_name="fs_read",
+        prefixed_name="files__fs_read",
+        description="Read a file",
+        input_schema={"type": "object"},
+    )
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-1",
+                        name="files__fs_read",
+                        arguments={"path": "docs/spec.md"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Recovered answer")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+        ],
+        tools=[],
+        mcp_manager=FakeMcpManager(
+            tools=[mcp_tool],
+            results={"files__fs_read": "file contents"},
+        ),
+    )
+
+    result = await runner.run_agent(agent_id, last_agent_sequence=0)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert result.ok is True
+    assert stored_items[2].type == ItemType.FUNCTION_CALL_OUTPUT
+    assert stored_items[2].is_error is False
+    assert stored_items[2].output == '{"ok": true, "output": "file contents"}'
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "tool.called",
+        "tool.completed",
+        "turn.completed",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_mcp_tool_failure_and_continues(db_session: Session) -> None:
+    mcp_tool = McpToolInfo(
+        server="files",
+        original_name="fs_read",
+        prefixed_name="files__fs_read",
+        description="Read a file",
+        input_schema={"type": "object"},
+    )
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-1",
+                        name="files__fs_read",
+                        arguments={"path": "docs/spec.md"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Recovered answer")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+        ],
+        tools=[],
+        mcp_manager=FakeMcpManager(
+            tools=[mcp_tool],
+            errors={"files__fs_read": "read failed"},
+        ),
+    )
+
+    result = await runner.run_agent(agent_id, last_agent_sequence=0)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert result.ok is True
+    assert stored_items[2].type == ItemType.FUNCTION_CALL_OUTPUT
+    assert stored_items[2].is_error is True
+    assert stored_items[2].output == '{"ok": false, "error": "read failed"}'
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "tool.called",
+        "tool.failed",
+        "turn.completed",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
     ]
 
 

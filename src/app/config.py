@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     DEFAULT_AGENT: str = ".agent_data/agents/manfred.agent.md"
     WORKSPACE_PATH: str = ".agent_data"
+    MCP_CONFIG_PATH: str = ".mcp.json"
+    MCP_TOOL_TIMEOUT_MS: int = 30000
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""

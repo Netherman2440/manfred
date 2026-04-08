@@ -23,6 +23,7 @@ from app.events import (
     TurnStartedEvent,
     build_event_context,
 )
+from app.mcp import McpManager
 from app.providers import (
     ProviderDoneEvent,
     ProviderErrorEvent,
@@ -74,6 +75,7 @@ class Runner:
         session_repository: SessionRepository,
         item_repository: ItemRepository,
         tool_registry: ToolRegistry,
+        mcp_manager: McpManager,
         provider_registry: ProviderRegistry,
         event_bus: EventBus,
     ) -> None:
@@ -81,6 +83,7 @@ class Runner:
         self.session_repository = session_repository
         self.item_repository = item_repository
         self.tool_registry = tool_registry
+        self.mcp_manager = mcp_manager
         self.provider_registry = provider_registry
         self.event_bus = event_bus
 
@@ -379,6 +382,15 @@ class Runner:
             tool_timer_started_at = perf_counter()
             tool = self.tool_registry.get(function_call.name)
             if tool is None:
+                handled = await self._handle_mcp_function_call(
+                    context,
+                    function_call=function_call,
+                    tool_started_at=tool_started_at,
+                    tool_timer_started_at=tool_timer_started_at,
+                )
+                if handled:
+                    continue
+
                 error_message = f"Tool not found: {function_call.name}"
                 tool_output = self.store_tool_output(
                     context.agent,
@@ -461,6 +473,66 @@ class Runner:
             )
 
         return TurnResult(status="continue", agent=context.agent, usage=response.usage)
+
+    async def _handle_mcp_function_call(
+        self,
+        context: AgentRunContext,
+        *,
+        function_call: ProviderFunctionCallOutputItem,
+        tool_started_at: object,
+        tool_timer_started_at: float,
+    ) -> bool:
+        if self.mcp_manager.parse_name(function_call.name) is None:
+            return False
+
+        try:
+            output = await self.mcp_manager.call_tool(
+                function_call.name,
+                function_call.arguments,
+            )
+            result: dict[str, Any] = {"ok": True, "output": output}
+            is_error = False
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc) or "MCP tool execution failed."}
+            is_error = True
+
+        tool_output = self.store_tool_output(
+            context.agent,
+            context.session,
+            call_id=function_call.call_id,
+            name=function_call.name,
+            result=result,
+            is_error=is_error,
+        )
+        context.items.append(tool_output)
+
+        duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+        if is_error:
+            self.event_bus.emit(
+                ToolFailedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    error=str(result.get("error") or "MCP tool execution failed."),
+                    duration_ms=duration_ms,
+                    start_time=tool_started_at,
+                )
+            )
+            return True
+
+        self.event_bus.emit(
+            ToolCompletedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                call_id=function_call.call_id,
+                name=function_call.name,
+                arguments=function_call.arguments,
+                output=dict(result),
+                duration_ms=duration_ms,
+                start_time=tool_started_at,
+            )
+        )
+        return True
 
     def load_agent_context(
         self,
