@@ -23,9 +23,9 @@ uv run python -m app.main
 The repo includes a root `.mcp.json` configured for `files-mcp`.
 
 - It exposes `files__fs_read`, `files__fs_search`, and `files__fs_write`.
-- Allowed roots are `.agent_data`, `docs`, and `src`.
+- Allowed roots follow `.mcp.json` `env.FS_ROOTS`: `.agent_data/agents`, `.agent_data/shared`, `.agent_data/skills`, `.agent_data/workflows`, and `.agent_data/workspaces`.
 - The config builds `files-mcp` into `/tmp/files-mcp-dist` on startup because the upstream repo in this environment does not include `dist/`.
-- Use relative paths in MCP calls, for example `docs/spec.md`; absolute paths are rejected by `files-mcp`.
+- Use relative paths in MCP calls, for example `.agent_data/skills/example.md`; absolute paths are rejected by `files-mcp`.
 
 ## Migration
 

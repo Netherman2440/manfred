@@ -13,12 +13,12 @@ tools:
 
 ## Referencje
 
-- wzorzec architektoniczny: `/home/netherman/code/4th-devs/01_05_agent/src/mcp/client.ts`
-- integracja z loaderem agenta: `/home/netherman/code/4th-devs/01_05_agent/src/workspace/loader.ts`
-- wykonanie MCP tooli w petli: `/home/netherman/code/4th-devs/01_05_agent/src/runtime/runner.ts`
-- obecny loader agenta w Pythonie: `/home/netherman/code/manfred/src/app/services/agent_loader.py`
-- obecny runner w Pythonie: `/home/netherman/code/manfred/src/app/runtime/runner.py`
-- obecny kontener DI: `/home/netherman/code/manfred/src/app/container.py`
+- wzorzec architektoniczny: `<reference-repo>/src/mcp/client.ts`
+- integracja z loaderem agenta: `<reference-repo>/src/workspace/loader.ts`
+- wykonanie MCP tooli w petli: `<reference-repo>/src/runtime/runner.ts`
+- obecny loader agenta w Pythonie: `src/app/services/agent_loader.py`
+- obecny runner w Pythonie: `src/app/runtime/runner.py`
+- obecny kontener DI: `src/app/container.py`
 
 ## Stan obecny `manfreda`
 
@@ -141,12 +141,12 @@ Przykladowy minimalny config dla `files-mcp`:
       "transport": "stdio",
       "command": "node",
       "args": [
-        "/home/netherman/code/4th-devs/mcp/files-mcp/dist/index.js"
+        "<files-mcp-repo>/dist/index.js"
       ],
       "env": {
-        "FS_ROOTS": "/home/netherman/code/manfred/.agent_data,/home/netherman/code/manfred/docs"
+        "FS_ROOTS": "<repo-root>/.agent_data,<repo-root>/docs"
       },
-      "cwd": "/home/netherman/code/manfred"
+      "cwd": "<repo-root>"
     }
   }
 }
@@ -164,10 +164,10 @@ Uwagi:
 
 Nowe pliki:
 
-- `/home/netherman/code/manfred/src/app/mcp/__init__.py`
-- `/home/netherman/code/manfred/src/app/mcp/types.py`
-- `/home/netherman/code/manfred/src/app/mcp/config.py`
-- `/home/netherman/code/manfred/src/app/mcp/client.py`
+- `src/app/mcp/__init__.py`
+- `src/app/mcp/types.py`
+- `src/app/mcp/config.py`
+- `src/app/mcp/client.py`
 
 Zakres:
 
@@ -194,9 +194,9 @@ Zakres:
 
 Zmiany w kodzie:
 
-- dodac provider lub singleton MCP do `/home/netherman/code/manfred/src/app/container.py`,
+- dodac provider lub singleton MCP do `src/app/container.py`,
 - dodac ustawienie typu `MCP_CONFIG_PATH` albo wyprowadzic sciezke z root repo,
-- wpiac `close()` w lifecycle aplikacji w `/home/netherman/code/manfred/src/app/main.py`.
+- wpiac `close()` w lifecycle aplikacji w `src/app/main.py`.
 
 Kryterium akceptacji:
 
