@@ -8,9 +8,11 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from app.events import (
+    AgentResumedEvent,
     AgentCompletedEvent,
     AgentFailedEvent,
     AgentStartedEvent,
+    AgentWaitingEvent,
     EventBus,
     GenerationCompletedEvent,
     ToolCalledEvent,
@@ -117,6 +119,27 @@ def subscribe_event_logger(event_bus: EventBus) -> Callable[[], None]:
             )
             return
 
+        if isinstance(event, AgentWaitingEvent):
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=_extract_waiting_descriptions(event.waiting_for),
+                waiting_for=event.waiting_for,
+            )
+            return
+
+        if isinstance(event, AgentResumedEvent):
+            _log_event(
+                logger,
+                logging.INFO,
+                event,
+                content=f"Resumed call {event.call_id}.",
+                call_id=event.call_id,
+                waiting_for=event.waiting_for,
+            )
+            return
+
         if isinstance(event, AgentFailedEvent):
             _log_event(
                 logger,
@@ -147,6 +170,17 @@ def _extract_tool_output_text(output: Any) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _extract_waiting_descriptions(waiting_for: list[object]) -> str | None:
+    descriptions: list[str] = []
+    for entry in waiting_for:
+        description = getattr(entry, "description", None)
+        if isinstance(description, str) and description:
+            descriptions.append(description)
+    if not descriptions:
+        return None
+    return " | ".join(descriptions)
 
 
 def _log_event(

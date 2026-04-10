@@ -3,6 +3,7 @@ from datetime import datetime
 
 from app.domain.tool import ToolDefinition
 from app.domain.types import AgentStatus
+from app.domain.waiting import WaitingForEntry
 
 
 @dataclass(slots=True, frozen=True)
@@ -19,10 +20,12 @@ class Agent:
     session_id: str
     root_agent_id: str
     parent_id: str | None
+    source_call_id: str | None
     depth: int
     agent_name: str | None
     status: AgentStatus
     turn_count: int
+    waiting_for: list[WaitingForEntry]
     config: AgentConfig
     created_at: datetime
     updated_at: datetime

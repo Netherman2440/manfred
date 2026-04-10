@@ -16,7 +16,9 @@ from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
 from app.services.chat_service import ChatService
+from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
+from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
 
 
@@ -34,7 +36,7 @@ def build_db_session(session_factory: Callable[[], Session]) -> Session:
 
 
 def get_tools() -> list[Tool]:
-    return [calculator_tool]
+    return [calculator_tool, delegate_tool, ask_user_tool]
 
 
 def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
@@ -70,6 +72,7 @@ def build_runner(
     mcp_manager: StdioMcpManager,
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
+    agent_loader: AgentLoader,
 ) -> Runner:
     return Runner(
         agent_repository=AgentRepository(session),
@@ -79,6 +82,7 @@ def build_runner(
         mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
+        agent_loader=agent_loader,
     )
 
 
@@ -111,6 +115,7 @@ def build_chat_service(
             mcp_manager=mcp_manager,
             provider_registry=provider_registry,
             event_bus=event_bus,
+            agent_loader=agent_loader,
         ),
     )
 
@@ -158,6 +163,7 @@ class Container(containers.DeclarativeContainer):
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
         repo_root=providers.Callable(get_repo_root),
+        workspace_path=settings.provided.WORKSPACE_PATH,
     )
 
     chat_service = providers.Factory(

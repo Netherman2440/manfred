@@ -10,10 +10,12 @@ def make_agent() -> Agent:
         session_id="session-1",
         root_agent_id="agent-1",
         parent_id=None,
+        source_call_id=None,
         depth=0,
         agent_name="manfred",
         status=AgentStatus.PENDING,
         turn_count=0,
+        waiting_for=[],
         config=AgentConfig(
             model="openrouter:test-model",
             task="Test task",

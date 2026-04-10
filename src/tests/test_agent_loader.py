@@ -65,6 +65,7 @@ def test_agent_loader_resolves_web_search_and_mcp_tools() -> None:
             ]
         ),
         repo_root=Path("/tmp"),
+        workspace_path=".agent_data",
     )
 
     resolved = loader.resolve_tool_definitions(["web_search", "files__fs_read", "missing_tool"])

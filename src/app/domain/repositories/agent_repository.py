@@ -9,6 +9,7 @@ from app.db.models import AgentModel
 from app.domain.agent import Agent, AgentConfig
 from app.domain.tool import FunctionToolDefinition, ToolDefinition, WebSearchToolDefinition
 from app.domain.types import AgentStatus
+from app.domain.waiting import WaitingForEntry
 
 
 class AgentRepository:
@@ -35,6 +36,17 @@ class AgentRepository:
         ).all()
         return [self._to_domain(model) for model in models]
 
+    def get_child_by_source_call(self, parent_id: str, source_call_id: str) -> Agent | None:
+        model = self.session.scalar(
+            select(AgentModel)
+            .where(
+                AgentModel.parent_id == parent_id,
+                AgentModel.source_call_id == source_call_id,
+            )
+            .order_by(AgentModel.created_at.desc())
+        )
+        return None if model is None else self._to_domain(model)
+
     def save(self, agent: Agent) -> Agent:
         model = self.session.get(AgentModel, agent.id)
         if model is None:
@@ -43,12 +55,14 @@ class AgentRepository:
         model.session_id = agent.session_id
         model.root_agent_id = agent.root_agent_id
         model.parent_id = agent.parent_id
+        model.source_call_id = agent.source_call_id
         model.depth = agent.depth
         model.agent_name = agent.agent_name
         model.status = agent.status.value
         model.model = agent.config.model
         model.task = agent.config.task
         model.config = self._serialize_config(agent.config)
+        model.waiting_for = self._serialize_waiting_for(agent.waiting_for)
         model.turn_count = agent.turn_count
         model.created_at = agent.created_at
         model.updated_at = agent.updated_at
@@ -64,10 +78,12 @@ class AgentRepository:
             session_id=model.session_id,
             root_agent_id=model.root_agent_id,
             parent_id=model.parent_id,
+            source_call_id=model.source_call_id,
             depth=model.depth,
             agent_name=model.agent_name,
             status=AgentStatus(model.status),
             turn_count=model.turn_count,
+            waiting_for=self._deserialize_waiting_for(model.waiting_for),
             config=AgentConfig(
                 model=model.model,
                 task=model.task,
@@ -118,3 +134,19 @@ class AgentRepository:
                 )
             )
         return tools
+
+    @staticmethod
+    def _serialize_waiting_for(waiting_for: list[WaitingForEntry]) -> list[dict[str, Any]]:
+        return [entry.to_dict() for entry in waiting_for]
+
+    @staticmethod
+    def _deserialize_waiting_for(payload: Any) -> list[WaitingForEntry]:
+        if not isinstance(payload, list):
+            return []
+
+        waiting_for: list[WaitingForEntry] = []
+        for item in payload:
+            entry = WaitingForEntry.from_dict(item)
+            if entry is not None:
+                waiting_for.append(entry)
+        return waiting_for
