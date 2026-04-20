@@ -64,16 +64,19 @@ class LangfuseSubscriber:
 
     def _handle_agent_started(self, event: AgentStartedEvent) -> None:
         trace_input = event.user_input or event.task
+        trace_name = None
+        if event.ctx.depth == 0:
+            trace_name = event.agent_name or event.ctx.agent_name or "agent"
         trace_attributes = {
             "user_id": event.user_id,
             "session_id": event.ctx.session_id,
-            "trace_name": event.agent_name or event.ctx.agent_name or "agent",
+            "trace_name": trace_name,
         }
         self._trace_attributes[event.ctx.agent_id] = trace_attributes
 
         with self._propagate_trace_attributes(event.ctx.agent_id):
             observation = self.client.start_observation(
-                trace_context={"trace_id": event.ctx.trace_id},
+                trace_context=self._build_agent_trace_context(event),
                 name=event.agent_name or event.ctx.agent_name or "agent",
                 as_type="agent",
                 input=trace_input,
@@ -180,6 +183,14 @@ class LangfuseSubscriber:
         parent_observation_id = self._agent_observation_ids.get(agent_id)
         if parent_observation_id:
             trace_context["parent_span_id"] = parent_observation_id
+        return trace_context
+
+    def _build_agent_trace_context(self, event: AgentStartedEvent) -> dict[str, str]:
+        trace_context = {"trace_id": event.ctx.trace_id}
+        if event.ctx.parent_agent_id:
+            parent_observation_id = self._agent_observation_ids.get(event.ctx.parent_agent_id)
+            if parent_observation_id:
+                trace_context["parent_span_id"] = parent_observation_id
         return trace_context
 
     def _propagate_trace_attributes(self, agent_id: str) -> Any:

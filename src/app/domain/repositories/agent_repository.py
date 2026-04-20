@@ -53,6 +53,7 @@ class AgentRepository:
             model = AgentModel(id=agent.id)
 
         model.session_id = agent.session_id
+        model.trace_id = agent.trace_id
         model.root_agent_id = agent.root_agent_id
         model.parent_id = agent.parent_id
         model.source_call_id = agent.source_call_id
@@ -76,6 +77,7 @@ class AgentRepository:
         return Agent(
             id=model.id,
             session_id=model.session_id,
+            trace_id=model.trace_id,
             root_agent_id=model.root_agent_id,
             parent_id=model.parent_id,
             source_call_id=model.source_call_id,

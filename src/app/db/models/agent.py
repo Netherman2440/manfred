@@ -16,6 +16,7 @@ class AgentModel(Base):
         nullable=False,
         index=True,
     )
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     root_agent_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_call_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

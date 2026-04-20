@@ -66,6 +66,14 @@ class FunctionCallResultOutputItem(BaseModel):
     is_error: bool = False
 
 
+class WaitingForOutputItem(BaseModel):
+    call_id: str
+    type: Literal["tool", "agent", "human"]
+    name: str
+    description: str | None = None
+    agent_id: str | None = None
+
+
 ChatOutputItem = Annotated[
     TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem,
     Field(discriminator="type"),
@@ -74,8 +82,16 @@ ChatOutputItem = Annotated[
 
 class ChatResponse(BaseModel):
     id: str
+    agent_id: str
     session_id: str
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "waiting", "failed"]
     model: str
     output: list[ChatOutputItem] = Field(default_factory=list)
+    waiting_for: list[WaitingForOutputItem] = Field(default_factory=list)
     error: str | None = None
+
+
+class DeliverRequest(BaseModel):
+    call_id: str = Field(..., min_length=1)
+    output: Any = None
+    is_error: bool = False

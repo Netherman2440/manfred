@@ -28,6 +28,15 @@ Zakres dokumentu obejmuje aktualny stan `manfreda`, referencje do dzialajacego p
 - Referencja TS domeny agenta: `4th-devs/01_05_agent/src/domain/agent.ts`
 - Referencja TS typow oczekiwania: `4th-devs/01_05_agent/src/domain/types.ts`
 
+## Dodatkowe uwagi wdrozeniowe
+
+Po doprecyzowaniu flow wyszly jeszcze cztery rzeczy, ktore warto zapisac w planie explicite:
+
+- limit delegacji nie powinien byc stalą w `manfred/src/app/runtime/runner.py`; powinien wychodzic z `manfred/src/app/config.py`,
+- `trace_id` musi byc utrwalany na agencie i ustawiany na granicy requestu w `prepare_chat(...)`, bo inaczej `deliver` i subagenci rozcinaja observability na wiele trace'ow,
+- `ChatResponse` powinien zwracac jawne `agent_id`, a wpisy `waiting_for` powinny opcjonalnie zwracac tez `agent_id` docelowego agenta oczekujacego na `deliver`,
+- `include_tool_result=true` powinno zwracac takze syntetyczny `function_call_output` dla aktywnego `waiting_for`, zeby klient dostal realne pytanie z `ask_user(...)`, nawet jesli runtime celowo nie zapisuje jeszcze trwałego `function_call_output` przed `deliver`.
+
 ## Stan obecny w `manfred`
 
 ### Co juz jest gotowe

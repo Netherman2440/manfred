@@ -18,6 +18,7 @@ class AgentConfig:
 class Agent:
     id: str
     session_id: str
+    trace_id: str | None
     root_agent_id: str
     parent_id: str | None
     source_call_id: str | None

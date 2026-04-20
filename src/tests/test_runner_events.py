@@ -188,6 +188,7 @@ def make_runner(
         Agent(
             id="agent-1",
             session_id=session.id,
+            trace_id=None,
             root_agent_id="agent-1",
             parent_id=None,
             source_call_id=None,
@@ -244,6 +245,7 @@ def make_runner(
         ),
         event_bus=event_bus,
         agent_loader=agent_loader or FakeAgentLoader(),
+        max_delegation_depth=8,
     )
     return runner, agent.id, event_types
 
@@ -621,7 +623,8 @@ async def test_runner_deliver_resumes_delegated_child_and_parent(db_session: Ses
     assert waiting_agent is not None
     assert waiting_agent.waiting_for[0].type == "agent"
     assert waiting_agent.waiting_for[0].call_id == "call-parent"
-    assert waiting_agent.waiting_for[0].description == "helper: Jaka wartosc mam wstawic?"
+    assert waiting_agent.waiting_for[0].description == "Jaka wartosc mam wstawic?"
+    assert waiting_agent.waiting_for[0].agent_id is not None
 
     resumed = await runner.deliver_result(
         agent_id,
@@ -786,6 +789,7 @@ def test_runner_uses_last_new_user_message_for_run_input() -> None:
     agent = Agent(
         id="agent-1",
         session_id="session-1",
+        trace_id=None,
         root_agent_id="agent-1",
         parent_id=None,
         source_call_id=None,

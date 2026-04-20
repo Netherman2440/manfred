@@ -30,5 +30,6 @@ The repo includes a root `.mcp.json` configured for `files-mcp`.
 ## Migration
 
 ```bash
-alembic revision -m "your message here"
+uv run alembic upgrade head
+ alembic revision --autogenerate #or alembic revision -m "your message here"
 ```
