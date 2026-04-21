@@ -42,6 +42,7 @@ from app.providers import (
 )
 from app.services.agent_loader import AgentLoader
 from app.tools.registry import ToolRegistry
+from app.utils.string_validator import _require_non_empty_string
 
 
 @dataclass(slots=True)
@@ -605,8 +606,8 @@ class Runner:
         tool_started_at: object,
         tool_timer_started_at: float,
     ) -> WaitingForEntry | None:
-        agent_name = self._require_non_empty_string(function_call.arguments.get("agent_name"), "agent_name")
-        task = self._require_non_empty_string(function_call.arguments.get("task"), "task")
+        agent_name = _require_non_empty_string(function_call.arguments.get("agent_name"), "agent_name")
+        task = _require_non_empty_string(function_call.arguments.get("task"), "task")
         duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
 
         if context.agent.depth + 1 > self.max_delegation_depth:
@@ -1203,12 +1204,6 @@ class Runner:
         if isinstance(value, str):
             return value
         return str(value)
-
-    @staticmethod
-    def _require_non_empty_string(value: Any, name: str) -> str:
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"'{name}' must be a non-empty string")
-        return value.strip()
 
     @staticmethod
     def _describe_waiting(agent: Agent | None) -> str | None:

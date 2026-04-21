@@ -320,6 +320,34 @@ def test_get_user_session_detail_returns_404_for_unknown_or_foreign_session(
     assert missing_response.status_code == 404
 
 
+def test_deliver_returns_403_for_agent_owned_by_other_user(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, test_session_factory = api_client
+    _seed_session_graph(
+        test_session_factory,
+        session_id="session-foreign",
+        user_id="other-user",
+        waiting_for=[
+            WaitingForEntry(
+                call_id="call-human",
+                type="human",
+                name="ask_user",
+                description="Doprecyzuj zakres.",
+                agent_id="agent-session-foreign",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/chat/agents/agent-session-foreign/deliver",
+        json={"call_id": "call-human", "output": "Zakres doprecyzowany.", "is_error": False},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "User default-user cannot deliver results to agent agent-session-foreign"
+
+
 def test_create_app_configures_cors_for_dynamic_localhost_ports() -> None:
     settings = Settings(
         _env_file=None,

@@ -3,12 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.domain.tool import FunctionToolDefinition, Tool
-
-
-def _require_non_empty_string(value: Any, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"'{name}' must be a non-empty string")
-    return value.strip()
+from app.utils.string_validator import _require_non_empty_string
 
 
 async def handle_ask_user(args: dict[str, Any], signal: Any | None = None) -> dict[str, bool | str]:

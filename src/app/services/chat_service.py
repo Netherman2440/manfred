@@ -221,6 +221,7 @@ class ChatService:
         *,
         include_tool_result: bool = False,
     ) -> ChatResponse:
+        self._ensure_agent_delivery_owner(agent_id)
         last_sequence = self.item_repository.get_last_sequence(agent_id)
         trace_id = uuid4().hex
         result_payload = self._build_delivery_result(deliver_request)
@@ -264,6 +265,19 @@ class ChatService:
             created_at=utcnow(),
         )
         return self.user_repository.save(user)
+
+    def _ensure_agent_delivery_owner(self, agent_id: str) -> None:
+        current_user = self._ensure_default_user()
+        agent = self.agent_repository.get(agent_id)
+        if agent is None:
+            raise RuntimeError(f"Agent not found: {agent_id}")
+
+        session = self.session_repository.get(agent.session_id)
+        if session is None:
+            raise RuntimeError(f"Session not found for agent: {agent_id}")
+
+        if session.user_id != current_user.id:
+            raise PermissionError(f"User {current_user.id} cannot deliver results to agent {agent_id}")
 
     def _load_session(self, session_id: str | None, user_id: str) -> Session:
         if not session_id:
