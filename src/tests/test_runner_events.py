@@ -37,6 +37,9 @@ from app.providers import (
     ProviderUsage,
 )
 from app.runtime.runner import Runner
+from app.services.agent_loader import LoadedAgent
+from app.tools.definitions.ask_user import ask_user_tool
+from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
 
 
@@ -122,6 +125,17 @@ class FakeMcpManager:
         return self._results[prefixed_name]
 
 
+class FakeAgentLoader:
+    def __init__(self, agents: dict[str, LoadedAgent] | None = None) -> None:
+        self._agents = agents or {}
+
+    def load_agent_by_name(self, agent_name: str) -> LoadedAgent:
+        agent = self._agents.get(agent_name)
+        if agent is None:
+            raise FileNotFoundError(f"Agent not found: {agent_name}")
+        return agent
+
+
 @pytest.fixture
 def db_session() -> Session:
     engine = create_engine("sqlite:///:memory:", future=True)
@@ -149,6 +163,7 @@ def make_runner(
     provider_streams: list[list[ProviderStreamEvent]] | None = None,
     tools: list[Tool],
     mcp_manager: FakeMcpManager | None = None,
+    agent_loader: FakeAgentLoader | None = None,
     model: str = "openrouter:test-model",
 ) -> tuple[Runner, str, list[str]]:
     user_repository = UserRepository(db_session)
@@ -173,12 +188,15 @@ def make_runner(
         Agent(
             id="agent-1",
             session_id=session.id,
+            trace_id=None,
             root_agent_id="agent-1",
             parent_id=None,
+            source_call_id=None,
             depth=0,
             agent_name="manfred",
             status=AgentStatus.PENDING,
             turn_count=0,
+            waiting_for=[],
             config=AgentConfig(
                 model=model,
                 task="Solve the task",
@@ -226,6 +244,8 @@ def make_runner(
             }
         ),
         event_bus=event_bus,
+        agent_loader=agent_loader or FakeAgentLoader(),
+        max_delegation_depth=8,
     )
     return runner, agent.id, event_types
 
@@ -439,6 +459,196 @@ async def test_runner_marks_mcp_tool_failure_and_continues(db_session: Session) 
 
 
 @pytest.mark.asyncio
+async def test_runner_moves_to_waiting_for_human_tool(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-1",
+                        name="ask_user",
+                        arguments={"question": "Jakiego formatu oczekujesz?"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            )
+        ],
+        tools=[ask_user_tool],
+    )
+
+    result = await runner.run_agent(agent_id, last_agent_sequence=0)
+    agent = AgentRepository(db_session).get(agent_id)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert result.ok is True
+    assert result.status == "waiting"
+    assert agent is not None
+    assert agent.status == AgentStatus.WAITING
+    assert len(agent.waiting_for) == 1
+    assert agent.waiting_for[0].type == "human"
+    assert agent.waiting_for[0].description == "Jakiego formatu oczekujesz?"
+    assert [item.type.value for item in stored_items[1:]] == ["function_call"]
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "tool.called",
+        "tool.completed",
+        "turn.completed",
+        "agent.waiting",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_delegate_completes_child_and_parent(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-1",
+                        name="delegate",
+                        arguments={"agent_name": "helper", "task": "Rozwiaz to za mnie"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Wynik dziecka")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Wynik parenta")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+        ],
+        tools=[delegate_tool],
+        agent_loader=FakeAgentLoader(
+            {
+                "helper": LoadedAgent(
+                    agent_name="helper",
+                    model="openrouter:test-model",
+                    tools=[],
+                    system_prompt="Pomagaj z zadaniami.",
+                )
+            }
+        ),
+    )
+
+    result = await runner.run_agent(agent_id, last_agent_sequence=0)
+    parent_items = ItemRepository(db_session).list_by_agent(agent_id)
+    children = AgentRepository(db_session).list_children(agent_id)
+
+    assert result.ok is True
+    assert result.status == "completed"
+    assert len(children) == 1
+    assert children[0].parent_id == agent_id
+    assert children[0].source_call_id == "call-1"
+    assert children[0].depth == 1
+    assert parent_items[2].type == ItemType.FUNCTION_CALL_OUTPUT
+    assert parent_items[2].output == '{"ok": true, "output": "Wynik dziecka"}'
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "tool.called",
+        "agent.started",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
+        "tool.completed",
+        "turn.completed",
+        "turn.started",
+        "generation.completed",
+        "turn.completed",
+        "agent.completed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_deliver_resumes_delegated_child_and_parent(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-parent",
+                        name="delegate",
+                        arguments={"agent_name": "helper", "task": "Dopytaj o brakujacy szczegol"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            ),
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-child",
+                        name="ask_user",
+                        arguments={"question": "Jaka wartosc mam wstawic?"},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=7, output_tokens=2, total_tokens=9),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Dziecko zakonczone")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Parent zakonczony")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+        ],
+        tools=[delegate_tool, ask_user_tool],
+        agent_loader=FakeAgentLoader(
+            {
+                "helper": LoadedAgent(
+                    agent_name="helper",
+                    model="openrouter:test-model",
+                    tools=[ask_user_tool.definition],
+                    system_prompt="Zbieraj brakujace dane.",
+                )
+            }
+        ),
+    )
+
+    initial = await runner.run_agent(agent_id, last_agent_sequence=0)
+    waiting_agent = AgentRepository(db_session).get(agent_id)
+
+    assert initial.ok is True
+    assert initial.status == "waiting"
+    assert waiting_agent is not None
+    assert waiting_agent.waiting_for[0].type == "agent"
+    assert waiting_agent.waiting_for[0].call_id == "call-parent"
+    assert waiting_agent.waiting_for[0].description == "Jaka wartosc mam wstawic?"
+    assert waiting_agent.waiting_for[0].agent_id is not None
+
+    resumed = await runner.deliver_result(
+        agent_id,
+        call_id="call-parent",
+        result={"ok": True, "output": "42"},
+    )
+    parent_agent = AgentRepository(db_session).get(agent_id)
+    child_agent = AgentRepository(db_session).get_child_by_source_call(agent_id, "call-parent")
+    parent_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert resumed.ok is True
+    assert resumed.status == "completed"
+    assert parent_agent is not None
+    assert parent_agent.status == AgentStatus.COMPLETED
+    assert parent_agent.waiting_for == []
+    assert child_agent is not None
+    assert child_agent.status == AgentStatus.COMPLETED
+    assert parent_items[2].output == '{"ok": true, "output": "Dziecko zakonczone"}'
+    assert parent_items[-1].content == "Parent zakonczony"
+    assert "agent.waiting" in event_types
+    assert event_types.count("agent.resumed") >= 2
+
+
+@pytest.mark.asyncio
 async def test_runner_stream_emits_text_events_and_persists_output(db_session: Session) -> None:
     runner, agent_id, event_types = make_runner(
         db_session,
@@ -579,12 +789,15 @@ def test_runner_uses_last_new_user_message_for_run_input() -> None:
     agent = Agent(
         id="agent-1",
         session_id="session-1",
+        trace_id=None,
         root_agent_id="agent-1",
         parent_id=None,
+        source_call_id=None,
         depth=0,
         agent_name="manfred",
         status=AgentStatus.PENDING,
         turn_count=0,
+        waiting_for=[],
         config=AgentConfig(
             model="openrouter:test-model",
             task="Solve the task",

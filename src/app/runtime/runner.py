@@ -8,12 +8,14 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.db.base import utcnow
-from app.domain import Agent, AgentStatus, Item, ItemType, MessageRole, Session
+from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, MessageRole, Session, WaitingForEntry
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
 from app.events import (
     AgentCompletedEvent,
     AgentFailedEvent,
+    AgentResumedEvent,
     AgentStartedEvent,
+    AgentWaitingEvent,
     EventBus,
     GenerationCompletedEvent,
     ToolCalledEvent,
@@ -38,7 +40,9 @@ from app.providers import (
     ProviderTextOutputItem,
     ProviderUsage,
 )
+from app.services.agent_loader import AgentLoader
 from app.tools.registry import ToolRegistry
+from app.utils.string_validator import _require_non_empty_string
 
 
 @dataclass(slots=True)
@@ -52,7 +56,7 @@ class AgentRunContext:
 
 @dataclass(slots=True)
 class TurnResult:
-    status: Literal["continue", "completed", "failed"]
+    status: Literal["continue", "completed", "waiting", "failed"]
     agent: Agent
     error: str | None = None
     usage: ProviderUsage | None = None
@@ -62,7 +66,7 @@ class TurnResult:
 @dataclass(slots=True)
 class RunResult:
     ok: bool
-    status: Literal["completed", "failed"]
+    status: Literal["completed", "waiting", "failed"]
     agent: Agent | None = None
     error: str | None = None
 
@@ -78,6 +82,8 @@ class Runner:
         mcp_manager: McpManager,
         provider_registry: ProviderRegistry,
         event_bus: EventBus,
+        agent_loader: AgentLoader,
+        max_delegation_depth: int,
     ) -> None:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
@@ -86,6 +92,8 @@ class Runner:
         self.mcp_manager = mcp_manager
         self.provider_registry = provider_registry
         self.event_bus = event_bus
+        self.agent_loader = agent_loader
+        self.max_delegation_depth = max_delegation_depth
 
     async def run_agent(
         self,
@@ -93,20 +101,21 @@ class Runner:
         *,
         max_turns: int = 10,
         last_agent_sequence: int = 0,
+        trace_id: str | None = None,
     ) -> RunResult:
         context = self.load_agent_context(
             agent_id,
-            trace_id=uuid4().hex,
+            trace_id=trace_id,
             last_agent_sequence=last_agent_sequence,
         )
         if context.agent.status == AgentStatus.WAITING:
             return RunResult(
-                ok=False,
-                status="failed",
+                ok=True,
+                status="waiting",
                 agent=context.agent,
-                error="Waiting agents are not implemented yet.",
             )
 
+        context.agent.trace_id = context.trace_id
         context.agent.status = AgentStatus.RUNNING
         context.agent.updated_at = utcnow()
         context.agent = self.agent_repository.save(context.agent)
@@ -162,6 +171,15 @@ class Runner:
                 context = self.reload_context(context)
                 continue
 
+            if turn.status == "waiting":
+                self.event_bus.emit(
+                    AgentWaitingEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        waiting_for=list(context.agent.waiting_for),
+                    )
+                )
+                return RunResult(ok=True, status="waiting", agent=context.agent)
+
             if turn.status == "completed":
                 self.event_bus.emit(
                     AgentCompletedEvent(
@@ -186,16 +204,17 @@ class Runner:
         *,
         max_turns: int = 10,
         last_agent_sequence: int = 0,
+        trace_id: str | None = None,
     ) -> AsyncIterable[ProviderStreamEvent]:
         context = self.load_agent_context(
             agent_id,
-            trace_id=uuid4().hex,
+            trace_id=trace_id,
             last_agent_sequence=last_agent_sequence,
         )
         if context.agent.status == AgentStatus.WAITING:
-            yield ProviderErrorEvent(error="Waiting agents are not implemented yet.")
             return
 
+        context.agent.trace_id = context.trace_id
         context.agent.status = AgentStatus.RUNNING
         context.agent.updated_at = utcnow()
         context.agent = self.agent_repository.save(context.agent)
@@ -301,6 +320,15 @@ class Runner:
                 context = self.reload_context(context)
                 continue
 
+            if turn_result.status == "waiting":
+                self.event_bus.emit(
+                    AgentWaitingEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        waiting_for=list(context.agent.waiting_for),
+                    )
+                )
+                return
+
             if turn_result.status == "completed":
                 self.event_bus.emit(
                     AgentCompletedEvent(
@@ -351,6 +379,7 @@ class Runner:
         )
 
         return await self.handle_turn_response(context, response)
+
     async def handle_turn_response(
         self,
         context: AgentRunContext,
@@ -365,8 +394,11 @@ class Runner:
         ]
 
         if not function_calls:  # TODO: support reasoning items when provider exposes them
+            context.agent.waiting_for = []
             context.agent.status = AgentStatus.COMPLETED
             return TurnResult(status="completed", agent=context.agent, usage=response.usage)
+
+        waiting_for: list[WaitingForEntry] = []
 
         for function_call in function_calls:
             self.event_bus.emit(
@@ -414,65 +446,306 @@ class Runner:
                 )
                 continue
 
-            if tool.type != "sync":
-                error_message = f"Tool type '{tool.type}' is not implemented yet."
+            if tool.type == "sync":
+                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                tool_output = self.store_tool_output(
+                    context.agent,
+                    context.session,
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    result=result,
+                    is_error=not bool(result.get("ok")),
+                )
+                context.items.append(tool_output)
+
+                duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+                if bool(result.get("ok")):
+                    self.event_bus.emit(
+                        ToolCompletedEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            call_id=function_call.call_id,
+                            name=function_call.name,
+                            arguments=function_call.arguments,
+                            output=dict(result),
+                            duration_ms=duration_ms,
+                            start_time=tool_started_at,
+                        )
+                    )
+                    continue
+
                 self.event_bus.emit(
                     ToolFailedEvent(
                         ctx=build_event_context(context.agent, context.trace_id),
                         call_id=function_call.call_id,
                         name=function_call.name,
                         arguments=function_call.arguments,
-                        error=error_message,
-                        duration_ms=self._duration_ms(tool_started_at, tool_timer_started_at),
-                        start_time=tool_started_at,
-                    )
-                )
-                return TurnResult(
-                    status="failed",
-                    agent=context.agent,
-                    error=error_message,
-                    usage=response.usage,
-                )
-
-            result = await self.tool_registry.execute(function_call.name, function_call.arguments)
-            tool_output = self.store_tool_output(
-                context.agent,
-                context.session,
-                call_id=function_call.call_id,
-                name=function_call.name,
-                result=result,
-                is_error=not bool(result.get("ok")),
-            )
-            context.items.append(tool_output)
-
-            duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
-            if bool(result.get("ok")):
-                self.event_bus.emit(
-                    ToolCompletedEvent(
-                        ctx=build_event_context(context.agent, context.trace_id),
-                        call_id=function_call.call_id,
-                        name=function_call.name,
-                        arguments=function_call.arguments,
-                        output=dict(result),
+                        error=str(result.get("error") or "Tool execution failed."),
                         duration_ms=duration_ms,
                         start_time=tool_started_at,
                     )
                 )
                 continue
 
+            if tool.type == "human":
+                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+                if not bool(result.get("ok")):
+                    tool_output = self.store_tool_output(
+                        context.agent,
+                        context.session,
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        result=result,
+                        is_error=True,
+                    )
+                    context.items.append(tool_output)
+                    self.event_bus.emit(
+                        ToolFailedEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            call_id=function_call.call_id,
+                            name=function_call.name,
+                            arguments=function_call.arguments,
+                            error=str(result.get("error") or "Tool execution failed."),
+                            duration_ms=duration_ms,
+                            start_time=tool_started_at,
+                        )
+                    )
+                    continue
+
+                output = dict(result)
+                self.event_bus.emit(
+                    ToolCompletedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        arguments=function_call.arguments,
+                        output=output,
+                        duration_ms=duration_ms,
+                        start_time=tool_started_at,
+                    )
+                )
+                waiting_for.append(
+                    WaitingForEntry(
+                        call_id=function_call.call_id,
+                        type="human",
+                        name=function_call.name,
+                        description=self._string_or_none(output.get("output")),
+                        agent_id=context.agent.id,
+                    )
+                )
+                continue
+
+            if tool.type == "agent":
+                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+                if not bool(result.get("ok")):
+                    tool_output = self.store_tool_output(
+                        context.agent,
+                        context.session,
+                        call_id=function_call.call_id,
+                        name=function_call.name,
+                        result=result,
+                        is_error=True,
+                    )
+                    context.items.append(tool_output)
+                    self.event_bus.emit(
+                        ToolFailedEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            call_id=function_call.call_id,
+                            name=function_call.name,
+                            arguments=function_call.arguments,
+                            error=str(result.get("error") or "Tool execution failed."),
+                            duration_ms=duration_ms,
+                            start_time=tool_started_at,
+                        )
+                    )
+                    continue
+
+                waiting_entry = await self._handle_agent_function_call(
+                    context,
+                    function_call=function_call,
+                    tool_started_at=tool_started_at,
+                    tool_timer_started_at=tool_timer_started_at,
+                )
+                if waiting_entry is not None:
+                    waiting_for.append(waiting_entry)
+                continue
+
+            error_message = f"Tool type '{tool.type}' is not implemented yet."
             self.event_bus.emit(
                 ToolFailedEvent(
                     ctx=build_event_context(context.agent, context.trace_id),
                     call_id=function_call.call_id,
                     name=function_call.name,
                     arguments=function_call.arguments,
-                    error=str(result.get("error") or "Tool execution failed."),
+                    error=error_message,
+                    duration_ms=self._duration_ms(tool_started_at, tool_timer_started_at),
+                    start_time=tool_started_at,
+                )
+            )
+            return TurnResult(
+                status="failed",
+                agent=context.agent,
+                error=error_message,
+                usage=response.usage,
+            )
+
+        if waiting_for:
+            context.agent.status = AgentStatus.WAITING
+            context.agent.waiting_for = waiting_for
+            return TurnResult(status="waiting", agent=context.agent, usage=response.usage)
+
+        context.agent.waiting_for = []
+        return TurnResult(status="continue", agent=context.agent, usage=response.usage)
+
+    async def _handle_agent_function_call(
+        self,
+        context: AgentRunContext,
+        *,
+        function_call: ProviderFunctionCallOutputItem,
+        tool_started_at: object,
+        tool_timer_started_at: float,
+    ) -> WaitingForEntry | None:
+        agent_name = _require_non_empty_string(function_call.arguments.get("agent_name"), "agent_name")
+        task = _require_non_empty_string(function_call.arguments.get("task"), "task")
+        duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
+
+        if context.agent.depth + 1 > self.max_delegation_depth:
+            error_message = f"Delegation depth exceeded max depth of {self.max_delegation_depth}."
+            tool_output = self.store_tool_output(
+                context.agent,
+                context.session,
+                call_id=function_call.call_id,
+                name=function_call.name,
+                result={"ok": False, "error": error_message},
+                is_error=True,
+            )
+            context.items.append(tool_output)
+            self.event_bus.emit(
+                ToolFailedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    error=error_message,
                     duration_ms=duration_ms,
                     start_time=tool_started_at,
                 )
             )
+            return None
 
-        return TurnResult(status="continue", agent=context.agent, usage=response.usage)
+        try:
+            loaded_agent = self.agent_loader.load_agent_by_name(agent_name)
+        except Exception as exc:
+            error_message = str(exc) or f"Child agent not found: {agent_name}"
+            tool_output = self.store_tool_output(
+                context.agent,
+                context.session,
+                call_id=function_call.call_id,
+                name=function_call.name,
+                result={"ok": False, "error": error_message},
+                is_error=True,
+            )
+            context.items.append(tool_output)
+            self.event_bus.emit(
+                ToolFailedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    error=error_message,
+                    duration_ms=duration_ms,
+                    start_time=tool_started_at,
+                )
+            )
+            return None
+
+        child_agent = self._create_child_agent(
+            parent_agent=context.agent,
+            agent_name=loaded_agent.agent_name,
+            model=loaded_agent.model or context.agent.config.model,
+            task=loaded_agent.system_prompt,
+            tools=loaded_agent.tools,
+            source_call_id=function_call.call_id,
+        )
+        self._store_child_task(child_agent, context.session, task)
+
+        child_result = await self.run_agent(
+            child_agent.id,
+            last_agent_sequence=0,
+            trace_id=context.trace_id,
+        )
+        if child_result.status == "completed":
+            output = {
+                "ok": True,
+                "output": self._find_agent_output_by_id(child_agent.id),
+            }
+            tool_output = self.store_tool_output(
+                context.agent,
+                context.session,
+                call_id=function_call.call_id,
+                name=function_call.name,
+                result=output,
+                is_error=False,
+            )
+            context.items.append(tool_output)
+            self.event_bus.emit(
+                ToolCompletedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    output=output,
+                    duration_ms=duration_ms,
+                    start_time=tool_started_at,
+                )
+            )
+            return None
+
+        if child_result.status == "waiting":
+            waiting_description = self._describe_waiting(child_result.agent) or task
+            waiting_entry = WaitingForEntry(
+                call_id=function_call.call_id,
+                type="agent",
+                name=function_call.name,
+                description=waiting_description,
+                agent_id=child_agent.id,
+            )
+            self.event_bus.emit(
+                ToolCompletedEvent(
+                    ctx=build_event_context(context.agent, context.trace_id),
+                    call_id=function_call.call_id,
+                    name=function_call.name,
+                    arguments=function_call.arguments,
+                    output={"ok": True, "output": waiting_entry.description or task},
+                    duration_ms=duration_ms,
+                    start_time=tool_started_at,
+                )
+            )
+            return waiting_entry
+
+        error_message = child_result.error or "Delegated agent execution failed."
+        tool_output = self.store_tool_output(
+            context.agent,
+            context.session,
+            call_id=function_call.call_id,
+            name=function_call.name,
+            result={"ok": False, "error": error_message},
+            is_error=True,
+        )
+        context.items.append(tool_output)
+        self.event_bus.emit(
+            ToolFailedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                call_id=function_call.call_id,
+                name=function_call.name,
+                arguments=function_call.arguments,
+                error=error_message,
+                duration_ms=duration_ms,
+                start_time=tool_started_at,
+            )
+        )
+        return None
 
     async def _handle_mcp_function_call(
         self,
@@ -538,7 +811,7 @@ class Runner:
         self,
         agent_id: str,
         *,
-        trace_id: str,
+        trace_id: str | None,
         last_agent_sequence: int,
     ) -> AgentRunContext:
         agent = self.agent_repository.get(agent_id)
@@ -550,11 +823,12 @@ class Runner:
             raise RuntimeError(f"Session not found for agent: {agent_id}")
 
         items = self.item_repository.list_by_agent(agent.id)
+        resolved_trace_id = trace_id or agent.trace_id or uuid4().hex
         return AgentRunContext(
             agent=agent,
             session=session,
             items=items,
-            trace_id=trace_id,
+            trace_id=resolved_trace_id,
             last_agent_sequence=last_agent_sequence,
         )
 
@@ -564,6 +838,104 @@ class Runner:
             trace_id=context.trace_id,
             last_agent_sequence=context.last_agent_sequence,
         )
+
+    async def deliver_result(
+        self,
+        agent_id: str,
+        *,
+        call_id: str,
+        result: dict[str, Any],
+        trace_id: str | None = None,
+    ) -> RunResult:
+        context = self.load_agent_context(
+            agent_id,
+            trace_id=trace_id,
+            last_agent_sequence=0,
+        )
+        if context.agent.status != AgentStatus.WAITING:
+            return RunResult(
+                ok=False,
+                status="failed",
+                agent=context.agent,
+                error="Agent is not waiting for input.",
+            )
+
+        waiting_entry = next((entry for entry in context.agent.waiting_for if entry.call_id == call_id), None)
+        if waiting_entry is None:
+            return RunResult(
+                ok=False,
+                status="failed",
+                agent=context.agent,
+                error=f"Waiting call not found: {call_id}",
+            )
+
+        if waiting_entry.type == "agent":
+            child_agent = self.agent_repository.get_child_by_source_call(context.agent.id, call_id)
+            if child_agent is None:
+                return RunResult(
+                    ok=False,
+                    status="failed",
+                    agent=context.agent,
+                    error=f"Delegated child agent not found for call: {call_id}",
+                )
+            if len(child_agent.waiting_for) != 1:
+                return RunResult(
+                    ok=False,
+                    status="failed",
+                    agent=context.agent,
+                    error="Delegated agent is waiting on multiple inputs; delivery is ambiguous.",
+                )
+
+            delegated_result = await self.deliver_result(
+                child_agent.id,
+                call_id=child_agent.waiting_for[0].call_id,
+                result=result,
+                trace_id=context.trace_id,
+            )
+            if not delegated_result.ok:
+                return delegated_result
+            refreshed_agent = self.agent_repository.get(agent_id)
+            if refreshed_agent is None:
+                return RunResult(ok=False, status="failed", error=f"Agent disappeared during delivery: {agent_id}")
+            return self._build_run_result_from_agent(refreshed_agent)
+
+        last_sequence = self.item_repository.get_last_sequence(context.agent.id)
+        tool_output = self.store_tool_output(
+            context.agent,
+            context.session,
+            call_id=call_id,
+            name=waiting_entry.name,
+            result=result,
+            is_error=not bool(result.get("ok")),
+        )
+        context.items.append(tool_output)
+        context.agent.waiting_for = [entry for entry in context.agent.waiting_for if entry.call_id != call_id]
+        context.agent.updated_at = utcnow()
+        self.event_bus.emit(
+            AgentResumedEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+                call_id=call_id,
+                waiting_for=list(context.agent.waiting_for),
+            )
+        )
+
+        if context.agent.waiting_for:
+            context.agent.status = AgentStatus.WAITING
+            context.agent.trace_id = context.trace_id
+            context.agent = self.agent_repository.save(context.agent)
+            return RunResult(ok=True, status="waiting", agent=context.agent)
+
+        context.agent.trace_id = context.trace_id
+        context.agent.status = AgentStatus.PENDING
+        context.agent = self.agent_repository.save(context.agent)
+        run_result = await self.run_agent(
+            context.agent.id,
+            last_agent_sequence=last_sequence,
+            trace_id=context.trace_id,
+        )
+        if run_result.agent is not None:
+            await self._propagate_child_result(run_result.agent, run_result, trace_id=context.trace_id)
+        return run_result
 
     @staticmethod
     def map_items_to_provider_input(items: list[Item]) -> list[
@@ -690,6 +1062,124 @@ class Runner:
         )
         return self.item_repository.save(item)
 
+    def _create_child_agent(
+        self,
+        *,
+        parent_agent: Agent,
+        agent_name: str,
+        model: str,
+        task: str,
+        tools: list[Any],
+        source_call_id: str,
+    ) -> Agent:
+        now = utcnow()
+        child = Agent(
+            id=uuid4().hex,
+            session_id=parent_agent.session_id,
+            trace_id=parent_agent.trace_id,
+            root_agent_id=parent_agent.root_agent_id,
+            parent_id=parent_agent.id,
+            source_call_id=source_call_id,
+            depth=parent_agent.depth + 1,
+            agent_name=agent_name,
+            status=AgentStatus.PENDING,
+            turn_count=0,
+            waiting_for=[],
+            config=AgentConfig(
+                model=model,
+                task=task,
+                tools=tools,
+                temperature=parent_agent.config.temperature,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+        return self.agent_repository.save(child)
+
+    def _store_child_task(self, child_agent: Agent, session: Session, task: str) -> Item:
+        item = Item(
+            id=uuid4().hex,
+            session_id=session.id,
+            agent_id=child_agent.id,
+            sequence=1,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content=task,
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=utcnow(),
+        )
+        return self.item_repository.save(item)
+
+    async def _propagate_child_result(self, agent: Agent, run_result: RunResult, *, trace_id: str | None = None) -> None:
+        if agent.parent_id is None or agent.source_call_id is None:
+            return
+        if run_result.status == "waiting":
+            return
+
+        parent_agent = self.agent_repository.get(agent.parent_id)
+        if parent_agent is None:
+            return
+        resolved_trace_id = trace_id or agent.trace_id or parent_agent.trace_id or uuid4().hex
+
+        waiting_entry = next((entry for entry in parent_agent.waiting_for if entry.call_id == agent.source_call_id), None)
+        if waiting_entry is None:
+            return
+
+        session = self.session_repository.get(parent_agent.session_id)
+        if session is None:
+            return
+
+        last_sequence = self.item_repository.get_last_sequence(parent_agent.id)
+        result_payload: dict[str, Any]
+        is_error: bool
+        if run_result.ok:
+            result_payload = {"ok": True, "output": self._find_agent_output_by_id(agent.id)}
+            is_error = False
+        else:
+            result_payload = {"ok": False, "error": run_result.error or "Delegated agent execution failed."}
+            is_error = True
+
+        self.store_tool_output(
+            parent_agent,
+            session,
+            call_id=agent.source_call_id,
+            name=waiting_entry.name,
+            result=result_payload,
+            is_error=is_error,
+        )
+        parent_agent.waiting_for = [
+            entry for entry in parent_agent.waiting_for if entry.call_id != agent.source_call_id
+        ]
+        parent_agent.updated_at = utcnow()
+        self.event_bus.emit(
+            AgentResumedEvent(
+                ctx=build_event_context(parent_agent, resolved_trace_id),
+                call_id=agent.source_call_id,
+                waiting_for=list(parent_agent.waiting_for),
+            )
+        )
+
+        if parent_agent.waiting_for:
+            parent_agent.status = AgentStatus.WAITING
+            parent_agent.trace_id = resolved_trace_id
+            self.agent_repository.save(parent_agent)
+            return
+
+        parent_agent.trace_id = resolved_trace_id
+        parent_agent.status = AgentStatus.PENDING
+        self.agent_repository.save(parent_agent)
+        parent_result = await self.run_agent(
+            parent_agent.id,
+            last_agent_sequence=last_sequence,
+            trace_id=resolved_trace_id,
+        )
+        if parent_result.agent is not None:
+            await self._propagate_child_result(parent_result.agent, parent_result, trace_id=resolved_trace_id)
+
     @staticmethod
     def _deserialize_arguments(raw_arguments: str | None) -> dict[str, Any]:
         if not raw_arguments:
@@ -699,6 +1189,39 @@ class Runner:
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    def _find_agent_output_by_id(self, agent_id: str) -> str | None:
+        result: str | None = None
+        for item in self.item_repository.list_by_agent(agent_id):
+            if item.type == ItemType.MESSAGE and item.role == MessageRole.ASSISTANT and item.content:
+                result = item.content
+        return result
+
+    @staticmethod
+    def _string_or_none(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    @staticmethod
+    def _describe_waiting(agent: Agent | None) -> str | None:
+        if agent is None:
+            return None
+        descriptions = [entry.description for entry in agent.waiting_for if entry.description]
+        if not descriptions:
+            return None
+        return " | ".join(descriptions)
+
+    def _build_run_result_from_agent(self, agent: Agent) -> RunResult:
+        if agent.status == AgentStatus.WAITING:
+            return RunResult(ok=True, status="waiting", agent=agent)
+        if agent.status == AgentStatus.COMPLETED:
+            return RunResult(ok=True, status="completed", agent=agent)
+        if agent.status == AgentStatus.FAILED:
+            return RunResult(ok=False, status="failed", agent=agent, error="Agent execution failed.")
+        return RunResult(ok=False, status="failed", agent=agent, error=f"Unexpected agent status: {agent.status}")
 
     def _fail_run(self, context: AgentRunContext, *, error: str) -> RunResult:
         context.agent.status = AgentStatus.FAILED

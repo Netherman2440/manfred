@@ -21,12 +21,15 @@ def make_agent() -> Agent:
     return Agent(
         id="agent-1",
         session_id="session-1",
+        trace_id=None,
         root_agent_id="agent-1",
         parent_id=None,
+        source_call_id=None,
         depth=0,
         agent_name="manfred",
         status=AgentStatus.PENDING,
         turn_count=0,
+        waiting_for=[],
         config=AgentConfig(
             model="openrouter:test-model",
             task="Test task",
@@ -204,6 +207,58 @@ def test_langfuse_subscriber_sets_trace_io_and_simplifies_generation_payloads() 
     ]
 
 
+def test_langfuse_subscriber_nests_child_agent_under_parent_observation() -> None:
+    client = Mock()
+    parent_observation = Mock()
+    parent_observation.id = "obs-parent"
+    child_observation = Mock()
+    child_observation.id = "obs-child"
+    client.start_observation.side_effect = [parent_observation, child_observation]
+    subscriber = LangfuseSubscriber(client=client)
+
+    parent_agent = make_agent()
+    child_agent = Agent(
+        id="agent-2",
+        session_id="session-1",
+        trace_id="trace-1",
+        root_agent_id="agent-1",
+        parent_id="agent-1",
+        source_call_id="call-1",
+        depth=1,
+        agent_name="research",
+        status=AgentStatus.PENDING,
+        turn_count=0,
+        waiting_for=[],
+        config=AgentConfig(
+            model="openrouter:test-model",
+            task="Find facts",
+            tools=[],
+            temperature=None,
+        ),
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+
+    subscriber._handle_agent_started(
+        AgentStartedEvent(
+            ctx=build_event_context(parent_agent, "trace-1"),
+            model=parent_agent.config.model,
+            task=parent_agent.config.task,
+            user_input="Hej",
+        )
+    )
+    subscriber._handle_agent_started(
+        AgentStartedEvent(
+            ctx=build_event_context(child_agent, "trace-1"),
+            model=child_agent.config.model,
+            task=child_agent.config.task,
+        )
+    )
+
+    assert client.start_observation.call_args_list[1].kwargs["trace_context"] == {
+        "trace_id": "trace-1",
+        "parent_span_id": "obs-parent",
+    }
 def _record_trace_attributes(
     storage: list[dict[str, str | None]],
     **kwargs: str | None,

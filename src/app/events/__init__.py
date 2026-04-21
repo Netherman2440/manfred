@@ -1,8 +1,10 @@
 from app.events.definitions import (
+    AgentResumedEvent,
     AgentCompletedEvent,
     AgentEvent,
     AgentFailedEvent,
     AgentStartedEvent,
+    AgentWaitingEvent,
     BaseEvent,
     EventContext,
     GenerationCompletedEvent,
@@ -16,10 +18,12 @@ from app.events.definitions import (
 from app.events.event_bus import EventBus, EventHandler
 
 __all__ = [
+    "AgentResumedEvent",
     "AgentCompletedEvent",
     "AgentEvent",
     "AgentFailedEvent",
     "AgentStartedEvent",
+    "AgentWaitingEvent",
     "BaseEvent",
     "EventBus",
     "EventContext",

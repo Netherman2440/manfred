@@ -36,10 +36,12 @@ class AgentLoader:
         tool_registry: ToolRegistry,
         mcp_manager: McpManager,
         repo_root: Path,
+        workspace_path: str,
     ) -> None:
         self.tool_registry = tool_registry
         self.mcp_manager = mcp_manager
         self.repo_root = repo_root
+        self.workspace_path = workspace_path
 
     def load_agent(self, agent_path: str | Path) -> LoadedAgent:
         file_path = self._resolve_agent_path(agent_path)
@@ -51,6 +53,13 @@ class AgentLoader:
             tools=tools,
             system_prompt=template.system_prompt,
         )
+
+    def load_agent_by_name(self, agent_name: str) -> LoadedAgent:
+        normalized_name = agent_name.strip()
+        if not normalized_name:
+            raise ValueError("agent_name must be a non-empty string")
+
+        return self.load_agent(self._agent_path_for_name(normalized_name))
 
     def load_agent_template(self, agent_path: str | Path) -> AgentTemplate:
         file_path = self._resolve_agent_path(agent_path)
@@ -114,6 +123,9 @@ class AgentLoader:
         if not path.is_absolute():
             path = self.repo_root / path
         return path.resolve()
+
+    def _agent_path_for_name(self, agent_name: str) -> Path:
+        return Path(self.workspace_path) / "agents" / f"{agent_name}{AGENT_EXTENSION}"
 
     @staticmethod
     def _agent_name_from_path(agent_path: Path) -> str:

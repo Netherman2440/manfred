@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from app.api.cors import apply_cors_middleware
 from app.api.v1.api import api_router
 from app.container import Container
 from app.observability import configure_logging, subscribe_event_logger
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
         description=settings.DESCRIPTION,
         lifespan=lifespan,
     )
+    apply_cors_middleware(app, settings)
     app.container = container
     app.include_router(api_router, prefix=settings.API_V1_STR)
     return app

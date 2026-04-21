@@ -4,7 +4,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
-from app.api.v1.chat.schema import ChatRequest, ChatResponse
+from app.api.v1.chat.schema import ChatRequest, ChatResponse, DeliverRequest
 from app.container import Container
 from app.providers import ProviderStreamEvent, serialize_provider_stream_event
 from app.services.chat_service import ChatService, ChatServiceValidationError
@@ -38,6 +38,28 @@ async def chat(
 
     try:
         return await chat_service.process_chat(payload)
+    except ChatServiceValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    finally:
+        chat_service.close()
+
+
+@router.post("/agents/{agent_id}/deliver", response_model=ChatResponse)
+@inject
+async def deliver(
+    agent_id: str,
+    payload: DeliverRequest,
+    include_tool_result: bool = False,
+    chat_service: ChatService = Depends(Provide[Container.chat_service]),
+) -> ChatResponse:
+    try:
+        return await chat_service.process_delivery(
+            agent_id,
+            payload,
+            include_tool_result=include_tool_result,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     except ChatServiceValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     finally:

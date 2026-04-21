@@ -4,6 +4,7 @@ from app.domain.session import Session
 from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, WebSearchToolDefinition
 from app.domain.types import AgentStatus, ItemType, MessageRole, SessionStatus
 from app.domain.user import User
+from app.domain.waiting import WaitingForEntry
 
 __all__ = [
     "Agent",
@@ -18,5 +19,6 @@ __all__ = [
     "Tool",
     "ToolDefinition",
     "User",
+    "WaitingForEntry",
     "WebSearchToolDefinition",
 ]

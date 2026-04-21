@@ -16,7 +16,10 @@ from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
 from app.services.chat_service import ChatService
+from app.services.session_query_service import SessionQueryService
+from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
+from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
 
 
@@ -34,7 +37,7 @@ def build_db_session(session_factory: Callable[[], Session]) -> Session:
 
 
 def get_tools() -> list[Tool]:
-    return [calculator_tool]
+    return [calculator_tool, delegate_tool, ask_user_tool]
 
 
 def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
@@ -66,10 +69,12 @@ def build_mcp_manager(
 def build_runner(
     *,
     session: Session,
+    settings: Settings,
     tool_registry: ToolRegistry,
     mcp_manager: StdioMcpManager,
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
+    agent_loader: AgentLoader,
 ) -> Runner:
     return Runner(
         agent_repository=AgentRepository(session),
@@ -79,6 +84,8 @@ def build_runner(
         mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
+        agent_loader=agent_loader,
+        max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
     )
 
 
@@ -107,11 +114,21 @@ def build_chat_service(
         item_repository=item_repository,
         runner=build_runner(
             session=session,
+            settings=settings,
             tool_registry=tool_registry,
             mcp_manager=mcp_manager,
             provider_registry=provider_registry,
             event_bus=event_bus,
+            agent_loader=agent_loader,
         ),
+    )
+
+
+def build_session_query_service(*, session: Session) -> SessionQueryService:
+    return SessionQueryService(
+        session_repository=SessionRepository(session),
+        agent_repository=AgentRepository(session),
+        item_repository=ItemRepository(session),
     )
 
 
@@ -121,6 +138,7 @@ class Container(containers.DeclarativeContainer):
             "app",
             "app.api.v1",
             "app.api.v1.chat",
+            "app.api.v1.users",
         ],
     )
 
@@ -158,6 +176,7 @@ class Container(containers.DeclarativeContainer):
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
         repo_root=providers.Callable(get_repo_root),
+        workspace_path=settings.provided.WORKSPACE_PATH,
     )
 
     chat_service = providers.Factory(
@@ -169,4 +188,8 @@ class Container(containers.DeclarativeContainer):
         mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
+    )
+    session_query_service = providers.Factory(
+        build_session_query_service,
+        session=db_session,
     )

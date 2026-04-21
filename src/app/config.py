@@ -15,12 +15,15 @@ class Settings(BaseSettings):
     API_HOST: str = "127.0.0.1"
     API_PORT: int = 3000
     API_RELOAD: bool = True
+    API_CORS_ORIGINS: str = ""
+    API_CORS_ALLOW_LOCALHOST: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
 
     DEFAULT_AGENT: str = ".agent_data/agents/manfred.agent.md"
     WORKSPACE_PATH: str = ".agent_data"
     MCP_CONFIG_PATH: str = ".mcp.json"
     MCP_TOOL_TIMEOUT_MS: int = 30000
+    MAX_DELEGATION_DEPTH: int = 8
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""
