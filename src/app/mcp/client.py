@@ -11,6 +11,7 @@ from typing import Any
 
 from app.mcp.config import load_mcp_config
 from app.mcp.types import McpConfig, McpServerConfig, McpServerStatus, McpToolInfo, parse_mcp_tool_name
+from app.runtime.cancellation import CancellationRequestedError
 
 
 logger = logging.getLogger("app.mcp")
@@ -113,14 +114,22 @@ class _StdioMcpSession:
 
         return tools
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
-        result = await self._request(
-            "tools/call",
-            {
-                "name": tool_name,
-                "arguments": arguments,
-            },
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        signal: object | None = None,
+    ) -> str:
+        request_task = asyncio.create_task(
+            self._request(
+                "tools/call",
+                {
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            )
         )
+        result = await self._await_with_cancellation(request_task, signal=signal)
 
         if bool(result.get("isError")):
             message = self._extract_result_text(result)
@@ -136,6 +145,31 @@ class _StdioMcpSession:
 
         content = result.get("content")
         return json.dumps(content if content is not None else result, ensure_ascii=True)
+
+    @staticmethod
+    async def _await_with_cancellation(
+        task: asyncio.Task[dict[str, Any]],
+        *,
+        signal: object | None = None,
+    ) -> dict[str, Any]:
+        if signal is None:
+            return await task
+
+        signal.raise_if_cancelled()
+        cancel_task = asyncio.create_task(signal.wait())
+        done, pending = await asyncio.wait(
+            {task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for pending_task in pending:
+            pending_task.cancel()
+
+        if cancel_task in done:
+            if not task.done():
+                task.cancel()
+            raise CancellationRequestedError("MCP tool execution cancelled.")
+
+        return task.result()
 
     async def close(self) -> None:
         for future in list(self._pending.values()):

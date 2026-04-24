@@ -13,6 +13,7 @@ from app.events import EventBus
 from app.mcp import StdioMcpManager
 from app.observability import build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
+from app.runtime.cancellation import ActiveRunRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
 from app.services.chat_service import ChatService
@@ -98,6 +99,7 @@ def build_chat_service(
     mcp_manager: StdioMcpManager,
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
+    active_run_registry: ActiveRunRegistry,
 ) -> ChatService:
     user_repository = UserRepository(session)
     session_repository = SessionRepository(session)
@@ -121,6 +123,7 @@ def build_chat_service(
             event_bus=event_bus,
             agent_loader=agent_loader,
         ),
+        active_run_registry=active_run_registry,
     )
 
 
@@ -156,6 +159,7 @@ class Container(containers.DeclarativeContainer):
         build_langfuse_subscriber,
         settings=settings,
     )
+    active_run_registry = providers.Singleton(ActiveRunRegistry)
 
     openrouter_provider = providers.Singleton(
         OpenRouterProvider,
@@ -188,6 +192,7 @@ class Container(containers.DeclarativeContainer):
         mcp_manager=mcp_manager,
         provider_registry=provider_registry,
         event_bus=event_bus,
+        active_run_registry=active_run_registry,
     )
     session_query_service = providers.Factory(
         build_session_query_service,

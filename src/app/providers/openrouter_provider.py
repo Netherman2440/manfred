@@ -27,6 +27,7 @@ from app.providers.types import (
     ProviderTextOutputItem,
     ProviderUsage,
 )
+from app.runtime.cancellation import CancellationRequestedError
 
 
 class OpenRouterProviderError(RuntimeError):
@@ -75,7 +76,15 @@ class OpenRouterProvider(Provider):
         if tools:
             payload["tools"] = tools
 
-        raw_response = await asyncio.to_thread(self._post_json, payload)
+        signal = request_data.signal
+        if signal is not None:
+            signal.raise_if_cancelled()
+
+        request_task = asyncio.create_task(asyncio.to_thread(self._post_json, payload))
+        raw_response = await self._await_with_cancellation(
+            request_task,
+            signal=signal,
+        )
         return self._parse_response(raw_response)
 
     async def stream(self, request_data: ProviderRequest) -> AsyncIterable[ProviderStreamEvent]:
@@ -99,10 +108,11 @@ class OpenRouterProvider(Provider):
         queue: asyncio.Queue[ProviderStreamEvent | object] = asyncio.Queue()
         finished = object()
         loop = asyncio.get_running_loop()
+        signal = request_data.signal
 
         def produce() -> None:
             try:
-                for event in self._stream_events_sync(payload):
+                for event in self._stream_events_sync(payload, signal=signal):
                     loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception as exc:  # pragma: no cover - defensive fallback
                 loop.call_soon_threadsafe(
@@ -116,7 +126,13 @@ class OpenRouterProvider(Provider):
         worker.start()
 
         while True:
-            item = await queue.get()
+            item = await self._await_with_cancellation(
+                asyncio.create_task(queue.get()),
+                signal=signal,
+                suppress_cancellation=True,
+            )
+            if item is None:
+                return
             if item is finished:
                 break
             yield cast(ProviderStreamEvent, item)
@@ -144,7 +160,12 @@ class OpenRouterProvider(Provider):
         except error.URLError as exc:
             raise OpenRouterProviderError(f"OpenRouter request failed: {exc.reason}") from exc
 
-    def _stream_events_sync(self, payload: dict[str, Any]) -> Iterator[ProviderStreamEvent]:
+    def _stream_events_sync(
+        self,
+        payload: dict[str, Any],
+        *,
+        signal: Any | None = None,
+    ) -> Iterator[ProviderStreamEvent]:
         body = json.dumps(payload).encode("utf-8")
         http_request = request.Request(
             url=f"{self._base_url}/chat/completions",
@@ -163,7 +184,7 @@ class OpenRouterProvider(Provider):
                     for raw_line in response
                 )
                 yield from self._iter_stream_events_from_payloads(
-                    self._iter_sse_payloads(lines)
+                    self._iter_sse_payloads(lines, signal=signal)
                 )
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
@@ -177,9 +198,11 @@ class OpenRouterProvider(Provider):
             yield ProviderErrorEvent(error=str(exc) or "OpenRouter streaming failed.")
 
     @staticmethod
-    def _iter_sse_payloads(lines: Iterable[str]) -> Iterator[str]:
+    def _iter_sse_payloads(lines: Iterable[str], *, signal: Any | None = None) -> Iterator[str]:
         data_lines: list[str] = []
         for raw_line in lines:
+            if signal is not None and signal.thread_event.is_set():
+                break
             line = raw_line.strip()
             if not line:
                 if data_lines:
@@ -200,6 +223,34 @@ class OpenRouterProvider(Provider):
             payload = "\n".join(data_lines)
             if payload != "[DONE]":
                 yield payload
+
+    @staticmethod
+    async def _await_with_cancellation(
+        task: asyncio.Task[Any],
+        *,
+        signal: Any | None = None,
+        suppress_cancellation: bool = False,
+    ) -> Any:
+        if signal is None:
+            return await task
+
+        signal.raise_if_cancelled()
+        cancel_task = asyncio.create_task(signal.wait())
+        done, pending = await asyncio.wait(
+            {task, cancel_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for pending_task in pending:
+            pending_task.cancel()
+
+        if cancel_task in done:
+            if not task.done():
+                task.cancel()
+            if suppress_cancellation:
+                return None
+            raise CancellationRequestedError("OpenRouter request cancelled.")
+
+        return task.result()
 
     @staticmethod
     def _iter_stream_events_from_payloads(payloads: Iterable[str]) -> Iterator[ProviderStreamEvent]:

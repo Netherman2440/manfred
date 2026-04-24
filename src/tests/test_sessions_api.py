@@ -348,6 +348,64 @@ def test_deliver_returns_403_for_agent_owned_by_other_user(
     assert response.json()["detail"] == "User default-user cannot deliver results to agent agent-session-foreign"
 
 
+def test_deliver_returns_404_for_unknown_waiting_call(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, test_session_factory = api_client
+    _seed_session_graph(
+        test_session_factory,
+        session_id="session-waiting",
+        user_id="default-user",
+        waiting_for=[
+            WaitingForEntry(
+                call_id="call-human",
+                type="human",
+                name="ask_user",
+                description="Doprecyzuj zakres.",
+                agent_id="agent-session-waiting",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/chat/agents/agent-session-waiting/deliver",
+        json={"call_id": "call-missing", "output": "Zakres doprecyzowany.", "is_error": False},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Waiting call not found: call-missing"
+
+
+def test_cancel_returns_terminal_status_for_completed_session(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, test_session_factory = api_client
+    _seed_session_graph(
+        test_session_factory,
+        session_id="session-completed",
+        user_id="default-user",
+    )
+
+    response = client.post("/api/v1/chat/sessions/session-completed/cancel", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["session_id"] == "session-completed"
+    assert payload["status"] == "completed"
+    assert payload["error"] is None
+
+
+def test_cancel_returns_404_for_unknown_session(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, _ = api_client
+
+    response = client.post("/api/v1/chat/sessions/session-missing/cancel", json={})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found: session-missing"
+
+
 def test_create_app_configures_cors_for_dynamic_localhost_ports() -> None:
     settings = Settings(
         _env_file=None,

@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -36,7 +37,9 @@ from app.providers import (
     ProviderTextOutputItem,
     ProviderUsage,
 )
+from app.runtime.cancellation import CancellationSignal
 from app.runtime.runner import Runner
+from app.runtime.cancellation import CancellationSignal
 from app.services.agent_loader import LoadedAgent
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
@@ -69,6 +72,19 @@ class FakeProvider(Provider):
 
         response = self._responses.pop(0)
         yield ProviderDoneEvent(response=response)
+
+
+class BlockingProvider(Provider):
+    async def generate(self, request_data):  # noqa: ANN001
+        await request_data.signal.wait()
+        request_data.signal.raise_if_cancelled()
+        raise AssertionError("generate should stop on cancellation")
+
+    async def stream(self, request_data):  # noqa: ANN001
+        yield ProviderTextDeltaEvent(delta="partial")
+        await request_data.signal.wait()
+        request_data.signal.raise_if_cancelled()
+        raise AssertionError("stream should stop on cancellation")
 
 
 class FakeMcpManager:
@@ -136,6 +152,25 @@ class FakeAgentLoader:
         return agent
 
 
+class BlockingProvider(Provider):
+    async def generate(self, request_data):  # noqa: ANN001
+        signal = request_data.signal
+        if signal is None:
+            raise RuntimeError("Cancellation signal is required for this test.")
+        await signal.wait()
+        signal.raise_if_cancelled()
+        raise AssertionError("Signal should cancel before continuing.")
+
+    async def stream(self, request_data):  # noqa: ANN001
+        signal = request_data.signal
+        if signal is None:
+            raise RuntimeError("Cancellation signal is required for this test.")
+        yield ProviderTextDeltaEvent(delta="Hel")
+        await signal.wait()
+        signal.raise_if_cancelled()
+        raise AssertionError("Signal should cancel before continuing.")
+
+
 @pytest.fixture
 def db_session() -> Session:
     engine = create_engine("sqlite:///:memory:", future=True)
@@ -161,6 +196,101 @@ def make_runner(
     *,
     provider_responses: list[ProviderResponse],
     provider_streams: list[list[ProviderStreamEvent]] | None = None,
+    tools: list[Tool],
+    mcp_manager: FakeMcpManager | None = None,
+    agent_loader: FakeAgentLoader | None = None,
+    model: str = "openrouter:test-model",
+    provider: Provider | None = None,
+) -> tuple[Runner, str, list[str]]:
+    user_repository = UserRepository(db_session)
+    session_repository = SessionRepository(db_session)
+    agent_repository = AgentRepository(db_session)
+    item_repository = ItemRepository(db_session)
+
+    now = utcnow()
+    user_repository.save(User(id="user-1", name="User", api_key_hash=None, created_at=now))
+    session = session_repository.save(
+        DomainSession(
+            id="session-1",
+            user_id="user-1",
+            root_agent_id="agent-1",
+            status=SessionStatus.ACTIVE,
+            title=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    agent = agent_repository.save(
+        Agent(
+            id="agent-1",
+            session_id=session.id,
+            trace_id=None,
+            root_agent_id="agent-1",
+            parent_id=None,
+            source_call_id=None,
+            depth=0,
+            agent_name="manfred",
+            status=AgentStatus.PENDING,
+            turn_count=0,
+            waiting_for=[],
+            config=AgentConfig(
+                model=model,
+                task="Solve the task",
+                tools=[tool.definition for tool in tools],
+                temperature=None,
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    item_repository.save(
+        Item(
+            id=uuid4().hex,
+            session_id=session.id,
+            agent_id=agent.id,
+            sequence=1,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content="User prompt",
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=now,
+        )
+    )
+
+    event_bus = EventBus()
+    event_types: list[str] = []
+    event_bus.subscribe("any", lambda event: event_types.append(event.type))
+
+    runner = Runner(
+        agent_repository=agent_repository,
+        session_repository=session_repository,
+        item_repository=item_repository,
+        tool_registry=ToolRegistry(tools=tools),
+        mcp_manager=mcp_manager or FakeMcpManager(),
+        provider_registry=ProviderRegistry(
+            {
+                "openrouter": provider
+                or FakeProvider(
+                    list(provider_responses),
+                    stream_events=list(provider_streams or []),
+                )
+            }
+        ),
+        event_bus=event_bus,
+        agent_loader=agent_loader or FakeAgentLoader(),
+        max_delegation_depth=8,
+    )
+    return runner, agent.id, event_types
+
+
+def make_runner_with_provider(
+    db_session: Session,
+    *,
+    provider: Provider,
     tools: list[Tool],
     mcp_manager: FakeMcpManager | None = None,
     agent_loader: FakeAgentLoader | None = None,
@@ -235,14 +365,7 @@ def make_runner(
         item_repository=item_repository,
         tool_registry=ToolRegistry(tools=tools),
         mcp_manager=mcp_manager or FakeMcpManager(),
-        provider_registry=ProviderRegistry(
-            {
-                "openrouter": FakeProvider(
-                    list(provider_responses),
-                    stream_events=list(provider_streams or []),
-                )
-            }
-        ),
+        provider_registry=ProviderRegistry({"openrouter": provider}),
         event_bus=event_bus,
         agent_loader=agent_loader or FakeAgentLoader(),
         max_delegation_depth=8,
@@ -273,6 +396,58 @@ async def test_runner_emits_happy_path_events_in_order(db_session: Session) -> N
         "turn.completed",
         "agent.completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_returns_cancelled_when_signal_interrupts_generate(
+    db_session: Session,
+) -> None:
+    runner, agent_id, event_types = make_runner_with_provider(
+        db_session,
+        provider=BlockingProvider(),
+        tools=[],
+    )
+    signal = CancellationSignal()
+
+    task = asyncio.create_task(runner.run_agent(agent_id, signal=signal))
+    await asyncio.sleep(0)
+    signal.cancel()
+    result = await task
+
+    assert result.status == "cancelled"
+    assert result.agent is not None
+    assert result.agent.status == AgentStatus.CANCELLED
+    assert event_types[-1] == "agent.cancelled"
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_cancels_without_emitting_failure(
+    db_session: Session,
+) -> None:
+    runner, agent_id, event_types = make_runner_with_provider(
+        db_session,
+        provider=BlockingProvider(),
+        tools=[],
+    )
+    signal = CancellationSignal()
+
+    async def collect_events() -> list[ProviderStreamEvent]:
+        events: list[ProviderStreamEvent] = []
+        async for event in runner.run_agent_stream(agent_id, signal=signal):
+            events.append(event)
+        return events
+
+    task = asyncio.create_task(collect_events())
+    await asyncio.sleep(0)
+    signal.cancel()
+    events = await task
+
+    assert [event.type for event in events] == ["text_delta"]
+    agent = runner.agent_repository.get(agent_id)
+    assert agent is not None
+    assert agent.status == AgentStatus.CANCELLED
+    assert "agent.cancelled" in event_types
+    assert "agent.failed" not in event_types
 
 
 @pytest.mark.asyncio
@@ -497,6 +672,77 @@ async def test_runner_moves_to_waiting_for_human_tool(db_session: Session) -> No
         "tool.completed",
         "turn.completed",
         "agent.waiting",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_non_stream_run_as_cancelled(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        tools=[],
+        provider=BlockingProvider(),
+    )
+    signal = CancellationSignal()
+
+    task = asyncio.create_task(
+        runner.run_agent(
+            agent_id,
+            last_agent_sequence=0,
+            signal=signal,
+        )
+    )
+    await asyncio.sleep(0)
+    signal.cancel()
+    result = await task
+    agent = AgentRepository(db_session).get(agent_id)
+
+    assert result.status == "cancelled"
+    assert result.ok is False
+    assert agent is not None
+    assert agent.status == AgentStatus.CANCELLED
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "agent.cancelled",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_stream_run_as_cancelled(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        tools=[],
+        provider=BlockingProvider(),
+    )
+    signal = CancellationSignal()
+    streamed_event_types: list[str] = []
+    streamed_deltas: list[str] = []
+
+    async for event in runner.run_agent_stream(
+        agent_id,
+        last_agent_sequence=0,
+        signal=signal,
+    ):
+        streamed_event_types.append(event.type)
+        if isinstance(event, ProviderTextDeltaEvent):
+            streamed_deltas.append(event.delta)
+        if event.type == "text_delta":
+            signal.cancel()
+
+    agent = AgentRepository(db_session).get(agent_id)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert streamed_event_types == ["text_delta"]
+    assert agent is not None
+    assert agent.status == AgentStatus.CANCELLED
+    assert [item.type.value for item in stored_items] == ["message", "message"]
+    assert stored_items[-1].content == "".join(streamed_deltas)
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "agent.cancelled",
     ]
 
 

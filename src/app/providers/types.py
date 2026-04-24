@@ -68,6 +68,7 @@ class ProviderRequest:
     input: list[ProviderInputItem]
     tools: list[ToolDefinition] = field(default_factory=list)
     temperature: float | None = None
+    signal: Any | None = None
 
 
 @dataclass(slots=True, frozen=True)

@@ -1,3 +1,4 @@
+from app.events.definitions.agent_cancelled import AgentCancelledEvent
 from app.events.definitions.agent_resumed import AgentResumedEvent
 from app.events.definitions.agent_completed import AgentCompletedEvent
 from app.events.definitions.agent_failed import AgentFailedEvent
@@ -12,7 +13,8 @@ from app.events.definitions.turn_completed import TurnCompletedEvent
 from app.events.definitions.turn_started import TurnStartedEvent
 
 AgentEvent = (
-    AgentResumedEvent
+    AgentCancelledEvent
+    | AgentResumedEvent
     | AgentStartedEvent
     | AgentWaitingEvent
     | TurnStartedEvent
@@ -26,6 +28,7 @@ AgentEvent = (
 )
 
 __all__ = [
+    "AgentCancelledEvent",
     "AgentResumedEvent",
     "AgentCompletedEvent",
     "AgentEvent",

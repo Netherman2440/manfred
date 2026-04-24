@@ -13,6 +13,7 @@ from app.api.v1.chat.schema import (
     ChatAgentConfigInput,
     ChatRequest,
     ChatResponse,
+    ChatStreamSessionEvent,
     DeliverRequest,
     FunctionCallOutputItem,
     FunctionCallResultOutputItem,
@@ -39,12 +40,18 @@ from app.domain import (
     WebSearchToolDefinition,
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
+from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, CancellationSignal
 from app.runtime.runner import Runner
+from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.providers import ProviderErrorEvent, ProviderStreamEvent
 
 
 class ChatServiceValidationError(ValueError):
+    pass
+
+
+class ChatServiceNotFoundError(LookupError):
     pass
 
 
@@ -62,6 +69,7 @@ class PreparedChatSetup:
     session: Session
     agent: Agent
     last_sequence: int
+    existing_session_item_ids: set[str]
 
 
 @dataclass(slots=True, frozen=True)
@@ -83,6 +91,7 @@ class ChatService:
         agent_repository: AgentRepository,
         item_repository: ItemRepository,
         runner: Runner,
+        active_run_registry: ActiveRunRegistry,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -92,29 +101,54 @@ class ChatService:
         self.agent_repository = agent_repository
         self.item_repository = item_repository
         self.runner = runner
+        self.active_run_registry = active_run_registry
 
     async def process_chat(self, chat_request: ChatRequest) -> ChatResponse:
+        active_run: ActiveRunHandle | None = None
+        run_result: RunResult | None = None
         try:
             setup = await self.prepare_chat(chat_request)
             if not setup.ok or setup.value is None:
                 raise ChatServiceValidationError(setup.error or "Chat setup failed.")
 
             self.session.flush()
+            active_run = await self.active_run_registry.start(setup.value.agent.id)
             response = await self.execute_chat(
                 setup.value.agent.id,
                 setup.value.last_sequence,
+                existing_session_item_ids=setup.value.existing_session_item_ids,
                 include_tool_result=chat_request.include_tool_result,
+                signal=active_run.signal,
             )
             self.session.commit()
+            agent = self.agent_repository.get(response.agent_id)
+            if agent is not None:
+                run_result = self.runner.build_run_result_from_agent(agent)
             return response
         except ChatServiceValidationError:
             self.session.rollback()
             raise
-        except Exception:
+        except Exception as exc:
             self.session.rollback()
+            if active_run is not None:
+                run_result = self._build_failed_run_result(
+                    active_run.agent_id,
+                    str(exc) or "Chat execution failed.",
+                )
             raise
+        finally:
+            if active_run is not None:
+                await self.active_run_registry.finish(
+                    active_run.agent_id,
+                    run_result or self._build_failed_run_result(active_run.agent_id, "Chat execution failed."),
+                )
 
-    async def process_chat_stream(self, chat_request: ChatRequest) -> AsyncIterable[ProviderStreamEvent]:
+    async def process_chat_stream(
+        self,
+        chat_request: ChatRequest,
+    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent]:
+        active_run: ActiveRunHandle | None = None
+        run_result: RunResult | None = None
         try:
             setup = await self.prepare_chat(chat_request)
             if not setup.ok or setup.value is None:
@@ -122,15 +156,34 @@ class ChatService:
                 return
 
             self.session.flush()
-            async for event in self.stream_prepared_chat(setup.value):
+            yield ChatStreamSessionEvent(
+                session_id=setup.value.session.id,
+                agent_id=setup.value.agent.id,
+            )
+            active_run = await self.active_run_registry.start(setup.value.agent.id)
+            async for event in self.stream_prepared_chat(setup.value, signal=active_run.signal):
                 yield event
             self.session.commit()
+            agent = self.agent_repository.get(setup.value.agent.id)
+            if agent is not None:
+                run_result = self.runner.build_run_result_from_agent(agent)
         except asyncio.CancelledError:
             self.session.rollback()
             raise
         except Exception as exc:
             self.session.rollback()
+            if active_run is not None:
+                run_result = self._build_failed_run_result(
+                    active_run.agent_id,
+                    str(exc) or "Chat streaming failed.",
+                )
             yield ProviderErrorEvent(error=str(exc) or "Chat streaming failed.")
+        finally:
+            if active_run is not None:
+                await self.active_run_registry.finish(
+                    active_run.agent_id,
+                    run_result or self._build_failed_run_result(active_run.agent_id, "Chat streaming failed."),
+                )
 
     async def process_delivery(
         self,
@@ -154,6 +207,26 @@ class ChatService:
             self.session.rollback()
             raise
 
+    async def process_cancel(
+        self,
+        session_id: str,
+        *,
+        include_tool_result: bool = False,
+    ) -> ChatResponse:
+        try:
+            response = await self.cancel_session_run(
+                session_id,
+                include_tool_result=include_tool_result,
+            )
+            self.session.commit()
+            return response
+        except ChatServiceValidationError:
+            self.session.rollback()
+            raise
+        except Exception:
+            self.session.rollback()
+            raise
+
     async def prepare_chat(self, chat_request: ChatRequest) -> PreparedChatSetupResult:
         try:
             user = self._ensure_default_user() #TODO: Get real user
@@ -162,6 +235,7 @@ class ChatService:
             trace_id = uuid4().hex
             agent = self._resolve_session_root_agent(session, resolved_config, trace_id=trace_id)
             last_sequence = self.item_repository.get_last_sequence(agent.id)
+            existing_session_item_ids = {item.id for item in self.item_repository.list_by_session(session.id)}
             self._store_input_items(chat_request, session, agent, last_sequence)
         except ChatServiceValidationError as exc:
             return PreparedChatSetupResult(ok=False, error=str(exc))
@@ -172,16 +246,20 @@ class ChatService:
                 session=session,
                 agent=agent,
                 last_sequence=last_sequence,
+                existing_session_item_ids=existing_session_item_ids,
             ),
         )
 
     async def stream_prepared_chat(
         self,
         setup: PreparedChatSetup,
+        *,
+        signal: CancellationSignal,
     ) -> AsyncIterable[ProviderStreamEvent]:
         async for event in self.runner.run_agent_stream(
             setup.agent.id,
             last_agent_sequence=setup.last_sequence,
+            signal=signal,
         ):
             yield event
 
@@ -190,18 +268,18 @@ class ChatService:
         agent_id: str,
         last_sequence: int,
         *,
+        existing_session_item_ids: set[str] | None = None,
         include_tool_result: bool = False,
+        signal: CancellationSignal | None = None,
     ) -> ChatResponse:
-        result = await self.runner.run_agent(agent_id, last_agent_sequence=last_sequence)
+        result = await self.runner.run_agent(
+            agent_id,
+            last_agent_sequence=last_sequence,
+            signal=signal,
+        )
         agent = result.agent or self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent disappeared during execution: {agent_id}")
-
-        response_items = self.item_repository.list_by_agent_after_sequence(agent_id, last_sequence)
-        output = self._build_response_output(
-            response_items,
-            include_tool_result=include_tool_result,
-        )
 
         return ChatResponse(
             id=agent.id,
@@ -209,9 +287,47 @@ class ChatService:
             session_id=agent.session_id,
             status=result.status,
             model=agent.config.model,
-            output=self._append_waiting_tool_results(agent, output, include_tool_result=include_tool_result),
+            output=self._build_chat_output(
+                agent,
+                last_sequence=last_sequence,
+                include_tool_result=include_tool_result,
+                existing_session_item_ids=existing_session_item_ids or set(),
+            ),
             waiting_for=self._build_waiting_for_output(agent.waiting_for),
             error=result.error,
+        )
+
+    async def cancel_session_run(
+        self,
+        session_id: str,
+        *,
+        include_tool_result: bool = False,
+    ) -> ChatResponse:
+        session = self._ensure_session_owner(session_id)
+        agent_id = session.root_agent_id
+        if not agent_id:
+            raise ChatServiceNotFoundError(f"Root agent not found for session: {session_id}")
+
+        result = await self.active_run_registry.cancel(agent_id)
+        agent = self.agent_repository.get(agent_id)
+        if agent is None:
+            raise ChatServiceNotFoundError(f"Agent not found: {agent_id}")
+
+        resolved_result = result or self.runner.build_run_result_from_agent(agent)
+        return ChatResponse(
+            id=agent.id,
+            agent_id=agent.id,
+            session_id=agent.session_id,
+            status=resolved_result.status,
+            model=agent.config.model,
+            output=self._build_chat_output(
+                agent,
+                last_sequence=0,
+                include_tool_result=include_tool_result,
+                existing_session_item_ids=set(),
+            ),
+            waiting_for=self._build_waiting_for_output(agent.waiting_for),
+            error=resolved_result.error,
         )
 
     async def deliver_to_agent(
@@ -221,8 +337,12 @@ class ChatService:
         *,
         include_tool_result: bool = False,
     ) -> ChatResponse:
-        self._ensure_agent_delivery_owner(agent_id)
+        self._ensure_agent_owner(agent_id)
+        current_agent = self.agent_repository.get(agent_id)
+        if current_agent is None:
+            raise ChatServiceNotFoundError(f"Agent not found: {agent_id}")
         last_sequence = self.item_repository.get_last_sequence(agent_id)
+        existing_session_item_ids = {item.id for item in self.item_repository.list_by_session(current_agent.session_id)}
         trace_id = uuid4().hex
         result_payload = self._build_delivery_result(deliver_request)
         result = await self.runner.deliver_result(
@@ -231,21 +351,23 @@ class ChatService:
             result=result_payload,
             trace_id=trace_id,
         )
+        if result.error is not None and result.error.startswith("Waiting call not found:"):
+            raise ChatServiceNotFoundError(result.error)
         agent = result.agent or self.agent_repository.get(agent_id)
         if agent is None:
             raise RuntimeError(f"Agent disappeared during delivery: {agent_id}")
-
-        output = self._build_response_output(
-            self.item_repository.list_by_agent_after_sequence(agent.id, last_sequence),
-            include_tool_result=include_tool_result,
-        )
         return ChatResponse(
             id=agent.id,
             agent_id=agent.id,
             session_id=agent.session_id,
             status=result.status,
             model=agent.config.model,
-            output=self._append_waiting_tool_results(agent, output, include_tool_result=include_tool_result),
+            output=self._build_chat_output(
+                agent,
+                last_sequence=last_sequence,
+                include_tool_result=include_tool_result,
+                existing_session_item_ids=existing_session_item_ids,
+            ),
             waiting_for=self._build_waiting_for_output(agent.waiting_for),
             error=result.error,
         )
@@ -266,11 +388,11 @@ class ChatService:
         )
         return self.user_repository.save(user)
 
-    def _ensure_agent_delivery_owner(self, agent_id: str) -> None:
+    def _ensure_agent_owner(self, agent_id: str) -> None:
         current_user = self._ensure_default_user()
         agent = self.agent_repository.get(agent_id)
         if agent is None:
-            raise RuntimeError(f"Agent not found: {agent_id}")
+            raise ChatServiceNotFoundError(f"Agent not found: {agent_id}")
 
         session = self.session_repository.get(agent.session_id)
         if session is None:
@@ -278,6 +400,26 @@ class ChatService:
 
         if session.user_id != current_user.id:
             raise PermissionError(f"User {current_user.id} cannot deliver results to agent {agent_id}")
+
+    def _ensure_session_owner(self, session_id: str) -> Session:
+        current_user = self._ensure_default_user()
+        session = self.session_repository.get(session_id)
+        if session is None:
+            raise ChatServiceNotFoundError(f"Session not found: {session_id}")
+
+        if session.user_id != current_user.id:
+            raise PermissionError(f"User {current_user.id} cannot cancel session {session_id}")
+
+        return session
+
+    def _build_failed_run_result(self, agent_id: str, error: str) -> RunResult:
+        agent = self.agent_repository.get(agent_id)
+        return RunResult(
+            ok=False,
+            status="failed",
+            agent=agent,
+            error=error,
+        )
 
     def _load_session(self, session_id: str | None, user_id: str) -> Session:
         if not session_id:
@@ -425,7 +567,13 @@ class ChatService:
 
         for item in items:
             if item.type == ItemType.MESSAGE and item.role == MessageRole.ASSISTANT and item.content:
-                output.append(TextOutputItem(text=item.content))
+                output.append(
+                    TextOutputItem(
+                        text=item.content,
+                        agent_id=item.agent_id,
+                        created_at=item.created_at,
+                    )
+                )
                 continue
 
             if item.type == ItemType.FUNCTION_CALL:
@@ -434,6 +582,8 @@ class ChatService:
                         call_id=item.call_id or "",
                         name=item.name or "",
                         arguments=ChatService._deserialize_arguments(item.arguments_json),
+                        agent_id=item.agent_id,
+                        created_at=item.created_at,
                     )
                 )
                 continue
@@ -446,6 +596,8 @@ class ChatService:
                         name=item.name or "",
                         output=ChatService._extract_tool_result_output(tool_result),
                         is_error=item.is_error,
+                        agent_id=item.agent_id,
+                        created_at=item.created_at,
                     )
                 )
 
@@ -464,8 +616,25 @@ class ChatService:
             for entry in waiting_for
         ]
 
-    @staticmethod
+    def _build_chat_output(
+        self,
+        agent: Agent,
+        *,
+        last_sequence: int,
+        include_tool_result: bool,
+        existing_session_item_ids: set[str],
+    ) -> list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem]:
+        if include_tool_result:
+            session_items = self.item_repository.list_by_session_chronological(agent.session_id)
+            new_items = [item for item in session_items if item.id not in existing_session_item_ids]
+            output = self._build_response_output(new_items, include_tool_result=True)
+            return self._append_waiting_tool_results(agent, output, include_tool_result=True)
+
+        response_items = self.item_repository.list_by_agent_after_sequence(agent.id, last_sequence)
+        return self._build_response_output(response_items, include_tool_result=False)
+
     def _append_waiting_tool_results(
+        self,
         agent: Agent,
         output: list[TextOutputItem | FunctionCallOutputItem | FunctionCallResultOutputItem],
         *,
@@ -474,17 +643,44 @@ class ChatService:
         if not include_tool_result or agent.status != AgentStatus.WAITING:
             return output
 
+        waiting_agents = self._collect_active_waiting_agents(agent)
         waiting_outputs = [
             FunctionCallResultOutputItem(
                 call_id=entry.call_id,
                 name=entry.name,
                 output=entry.description,
                 is_error=False,
+                agent_id=waiting_agent.id,
+                created_at=None,
             )
-            for entry in agent.waiting_for
+            for waiting_agent in waiting_agents
+            for entry in waiting_agent.waiting_for
             if entry.description
         ]
         return [*output, *waiting_outputs]
+
+    def _collect_active_waiting_agents(self, root_agent: Agent) -> list[Agent]:
+        waiting_agents: list[Agent] = []
+        seen_agent_ids: set[str] = set()
+        stack: list[Agent] = [root_agent]
+
+        while stack:
+            current = stack.pop()
+            if current.id in seen_agent_ids or current.status != AgentStatus.WAITING:
+                continue
+
+            seen_agent_ids.add(current.id)
+            waiting_agents.append(current)
+
+            for entry in current.waiting_for:
+                if entry.type != "agent" or not entry.agent_id:
+                    continue
+                child_agent = self.agent_repository.get(entry.agent_id)
+                if child_agent is not None:
+                    stack.append(child_agent)
+
+        waiting_agents.sort(key=lambda waiting_agent: (-waiting_agent.depth, waiting_agent.created_at))
+        return waiting_agents
 
     @staticmethod
     def _deserialize_arguments(raw_arguments: str | None) -> dict[str, Any]:

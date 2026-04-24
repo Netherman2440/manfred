@@ -1,12 +1,14 @@
 import json
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.api.v1.chat.api import chat
-from app.api.v1.chat.schema import ChatRequest, MessageInputItem
+from app.api.v1.chat.api import cancel, chat
+from app.api.v1.chat.schema import ChatRequest, ChatResponse, ChatStreamSessionEvent, MessageInputItem
 from app.providers import ProviderDoneEvent, ProviderErrorEvent, ProviderTextDeltaEvent, ProviderTextDoneEvent
 from app.providers.types import ProviderResponse, ProviderTextOutputItem
+from app.services.chat_service import ChatServiceNotFoundError
 
 
 class FakeChatService:
@@ -22,6 +24,21 @@ class FakeChatService:
     async def process_chat(self, payload):  # noqa: ANN001
         del payload
         raise AssertionError("Non-stream path should not be used in this test.")
+
+    async def process_cancel(self, session_id, include_tool_result=False):  # noqa: ANN001
+        del include_tool_result
+        if session_id == "missing-session":
+            raise ChatServiceNotFoundError("Session not found: missing-session")
+        return ChatResponse(
+            id="agent-1",
+            agent_id="agent-1",
+            session_id=session_id,
+            status="cancelled",
+            model="openrouter:test-model",
+            output=[],
+            waiting_for=[],
+            error=None,
+        )
 
     def close(self) -> None:
         self.close_calls += 1
@@ -41,6 +58,7 @@ async def _read_stream_body(response: StreamingResponse) -> str:
 async def test_chat_stream_returns_sse_payloads() -> None:
     chat_service = FakeChatService(
         [
+            ChatStreamSessionEvent(session_id="session-1", agent_id="agent-1"),
             ProviderTextDeltaEvent(delta="Hello"),
             ProviderTextDoneEvent(text="Hello"),
             ProviderDoneEvent(
@@ -63,6 +81,8 @@ async def test_chat_stream_returns_sse_payloads() -> None:
     assert response.media_type == "text/event-stream"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
+    assert "event: session" in body
+    assert 'data: {"type": "session", "session_id": "session-1", "agent_id": "agent-1"}' in body
     assert "event: text_delta" in body
     assert 'data: {"type": "text_delta", "delta": "Hello"}' in body
     assert "event: done" in body
@@ -105,4 +125,27 @@ async def test_chat_stream_returns_error_event_payload() -> None:
 
     assert "event: error" in body
     assert 'data: {"type": "error", "error": "setup failed", "code": null}' in body
+    assert chat_service.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_chat_response() -> None:
+    chat_service = FakeChatService([])
+
+    response = await cancel("session-1", chat_service=chat_service)
+
+    assert response.status == "cancelled"
+    assert response.session_id == "session-1"
+    assert chat_service.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_404_for_missing_session() -> None:
+    chat_service = FakeChatService([])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await cancel("missing-session", chat_service=chat_service)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Session not found: missing-session"
     assert chat_service.close_calls == 1
