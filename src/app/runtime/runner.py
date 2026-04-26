@@ -11,6 +11,7 @@ from app.db.base import utcnow
 from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, MessageRole, Session, WaitingForEntry
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
 from app.events import (
+    AgentCancelledEvent,
     AgentCompletedEvent,
     AgentFailedEvent,
     AgentResumedEvent,
@@ -37,9 +38,13 @@ from app.providers import (
     ProviderRequest,
     ProviderResponse,
     ProviderStreamEvent,
+    ProviderTextDeltaEvent,
+    ProviderTextDoneEvent,
     ProviderTextOutputItem,
     ProviderUsage,
 )
+from app.runtime.cancellation import CancellationRequestedError, CancellationSignal
+from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.tools.registry import ToolRegistry
 from app.utils.string_validator import _require_non_empty_string
@@ -56,19 +61,11 @@ class AgentRunContext:
 
 @dataclass(slots=True)
 class TurnResult:
-    status: Literal["continue", "completed", "waiting", "failed"]
+    status: Literal["continue", "completed", "waiting", "failed", "cancelled"]
     agent: Agent
     error: str | None = None
     usage: ProviderUsage | None = None
     error_emitted: bool = False
-
-
-@dataclass(slots=True)
-class RunResult:
-    ok: bool
-    status: Literal["completed", "waiting", "failed"]
-    agent: Agent | None = None
-    error: str | None = None
 
 
 class Runner:
@@ -102,18 +99,25 @@ class Runner:
         max_turns: int = 10,
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
+        signal: CancellationSignal | None = None,
     ) -> RunResult:
         context = self.load_agent_context(
             agent_id,
             trace_id=trace_id,
             last_agent_sequence=last_agent_sequence,
         )
+        signal = signal or CancellationSignal()
         if context.agent.status == AgentStatus.WAITING:
             return RunResult(
                 ok=True,
                 status="waiting",
                 agent=context.agent,
             )
+
+        try:
+            signal.raise_if_cancelled()
+        except CancellationRequestedError:
+            return self._cancel_run(context)
 
         context.agent.trace_id = context.trace_id
         context.agent.status = AgentStatus.RUNNING
@@ -136,6 +140,11 @@ class Runner:
         turns_executed = 0
 
         while context.agent.status == AgentStatus.RUNNING:
+            try:
+                signal.raise_if_cancelled()
+            except CancellationRequestedError:
+                return self._cancel_run(context)
+
             if turns_executed >= max_turns:
                 return self._fail_run(
                     context,
@@ -149,11 +158,14 @@ class Runner:
                 )
             )
 
-            turn = await self.execute_turn(context)
+            try:
+                turn = await self.execute_turn(context, signal=signal)
+            except CancellationRequestedError:
+                return self._cancel_run(context)
             context.agent = turn.agent
             total_usage = self._add_usage(total_usage, turn.usage)
 
-            if turn.status != "failed":
+            if turn.status not in {"failed", "cancelled"}:
                 self.event_bus.emit(
                     TurnCompletedEvent(
                         ctx=build_event_context(context.agent, context.trace_id),
@@ -161,6 +173,9 @@ class Runner:
                         usage=turn.usage,
                     )
                 )
+
+            if turn.status == "cancelled":
+                return self._cancel_run(context)
 
             context.agent.turn_count += 1
             context.agent.updated_at = utcnow()
@@ -205,13 +220,21 @@ class Runner:
         max_turns: int = 10,
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
+        signal: CancellationSignal | None = None,
     ) -> AsyncIterable[ProviderStreamEvent]:
         context = self.load_agent_context(
             agent_id,
             trace_id=trace_id,
             last_agent_sequence=last_agent_sequence,
         )
+        signal = signal or CancellationSignal()
         if context.agent.status == AgentStatus.WAITING:
+            return
+
+        try:
+            signal.raise_if_cancelled()
+        except CancellationRequestedError:
+            self._cancel_run(context)
             return
 
         context.agent.trace_id = context.trace_id
@@ -235,6 +258,12 @@ class Runner:
         turns_executed = 0
 
         while context.agent.status == AgentStatus.RUNNING:
+            try:
+                signal.raise_if_cancelled()
+            except CancellationRequestedError:
+                self._cancel_run(context)
+                return
+
             if turns_executed >= max_turns:
                 result = self._fail_run(context, error="Agent exceeded max_turns.")
                 yield ProviderErrorEvent(error=result.error or "Agent exceeded max_turns.")
@@ -255,15 +284,25 @@ class Runner:
                     error=f"Unknown provider or model reference: {context.agent.config.model}",
                 )
             else:
-                request_input, request = self._build_provider_request(context, model=resolved.model)
+                _request_input, request = self._build_provider_request(
+                    context,
+                    model=resolved.model,
+                    signal=signal,
+                )
                 generation_started_at = utcnow()
                 generation_timer_started_at = perf_counter()
                 response: ProviderResponse | None = None
+                partial_text_chunks: list[str] = []
                 turn_result = None
 
                 try:
                     async for event in resolved.provider.stream(request):
-                        yield event
+                        if isinstance(event, ProviderTextDeltaEvent) and event.delta:
+                            partial_text_chunks.append(event.delta)
+                        elif isinstance(event, ProviderTextDoneEvent) and event.text and not partial_text_chunks:
+                            partial_text_chunks.append(event.text)
+
+                        signal.raise_if_cancelled()
                         if isinstance(event, ProviderDoneEvent):
                             response = event.response
                         elif isinstance(event, ProviderErrorEvent):
@@ -274,6 +313,17 @@ class Runner:
                                 error_emitted=True,
                             )
                             break
+                        yield event
+                except CancellationRequestedError:
+                    self._store_partial_stream_text(
+                        context.agent,
+                        context.session,
+                        "".join(partial_text_chunks),
+                    )
+                    turn_result = TurnResult(
+                        status="cancelled",
+                        agent=context.agent,
+                    )
                 except Exception as exc:
                     turn_result = TurnResult(
                         status="failed",
@@ -297,12 +347,16 @@ class Runner:
                             generation_started_at=generation_started_at,
                             generation_timer_started_at=generation_timer_started_at,
                         )
-                        turn_result = await self.handle_turn_response(context, response)
+                        turn_result = await self.handle_turn_response(
+                            context,
+                            response,
+                            signal=signal,
+                        )
 
             context.agent = turn_result.agent
             total_usage = self._add_usage(total_usage, turn_result.usage)
 
-            if turn_result.status != "failed":
+            if turn_result.status not in {"failed", "cancelled"}:
                 self.event_bus.emit(
                     TurnCompletedEvent(
                         ctx=build_event_context(context.agent, context.trace_id),
@@ -310,6 +364,10 @@ class Runner:
                         usage=turn_result.usage,
                     )
                 )
+
+            if turn_result.status == "cancelled":
+                self._cancel_run(context)
+                return
 
             context.agent.turn_count += 1
             context.agent.updated_at = utcnow()
@@ -351,7 +409,12 @@ class Runner:
         result = self._fail_run(context, error="Agent stopped unexpectedly.")
         yield ProviderErrorEvent(error=result.error or "Agent stopped unexpectedly.")
 
-    async def execute_turn(self, context: AgentRunContext) -> TurnResult:
+    async def execute_turn(
+        self,
+        context: AgentRunContext,
+        *,
+        signal: CancellationSignal,
+    ) -> TurnResult:
         resolved = self.provider_registry.resolve(context.agent.config.model)
         if resolved is None:
             return TurnResult(
@@ -360,12 +423,20 @@ class Runner:
                 error=f"Unknown provider or model reference: {context.agent.config.model}",
             )
 
-        _request_input, request = self._build_provider_request(context, model=resolved.model)
+        _request_input, request = self._build_provider_request(
+            context,
+            model=resolved.model,
+            signal=signal,
+        )
         generation_started_at = utcnow()
         generation_timer_started_at = perf_counter()
 
         try:
+            signal.raise_if_cancelled()
             response = await resolved.provider.generate(request)
+            signal.raise_if_cancelled()
+        except CancellationRequestedError:
+            return TurnResult(status="cancelled", agent=context.agent)
         except Exception as exc:
             return TurnResult(status="failed", agent=context.agent, error=str(exc) or "Provider call failed.")
 
@@ -378,13 +449,20 @@ class Runner:
             generation_timer_started_at=generation_timer_started_at,
         )
 
-        return await self.handle_turn_response(context, response)
+        return await self.handle_turn_response(
+            context,
+            response,
+            signal=signal,
+        )
 
     async def handle_turn_response(
         self,
         context: AgentRunContext,
         response: ProviderResponse,
+        *,
+        signal: CancellationSignal,
     ) -> TurnResult:
+        signal.raise_if_cancelled()
         context.items.extend(self.store_provider_output(context.agent, context.session, response))
 
         function_calls = [
@@ -401,6 +479,7 @@ class Runner:
         waiting_for: list[WaitingForEntry] = []
 
         for function_call in function_calls:
+            signal.raise_if_cancelled()
             self.event_bus.emit(
                 ToolCalledEvent(
                     ctx=build_event_context(context.agent, context.trace_id),
@@ -419,6 +498,7 @@ class Runner:
                     function_call=function_call,
                     tool_started_at=tool_started_at,
                     tool_timer_started_at=tool_timer_started_at,
+                    signal=signal,
                 )
                 if handled:
                     continue
@@ -447,7 +527,11 @@ class Runner:
                 continue
 
             if tool.type == "sync":
-                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                result = await self.tool_registry.execute(
+                    function_call.name,
+                    function_call.arguments,
+                    signal=signal,
+                )
                 tool_output = self.store_tool_output(
                     context.agent,
                     context.session,
@@ -471,6 +555,7 @@ class Runner:
                             start_time=tool_started_at,
                         )
                     )
+                    signal.raise_if_cancelled()
                     continue
 
                 self.event_bus.emit(
@@ -484,10 +569,15 @@ class Runner:
                         start_time=tool_started_at,
                     )
                 )
+                signal.raise_if_cancelled()
                 continue
 
             if tool.type == "human":
-                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                result = await self.tool_registry.execute(
+                    function_call.name,
+                    function_call.arguments,
+                    signal=signal,
+                )
                 duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
                 if not bool(result.get("ok")):
                     tool_output = self.store_tool_output(
@@ -510,6 +600,7 @@ class Runner:
                             start_time=tool_started_at,
                         )
                     )
+                    signal.raise_if_cancelled()
                     continue
 
                 output = dict(result)
@@ -533,10 +624,16 @@ class Runner:
                         agent_id=context.agent.id,
                     )
                 )
+                signal.raise_if_cancelled()
                 continue
 
             if tool.type == "agent":
-                result = await self.tool_registry.execute(function_call.name, function_call.arguments)
+                result = await self.tool_registry.execute(
+                    function_call.name,
+                    function_call.arguments,
+                    signal=signal,
+                )
+                signal.raise_if_cancelled()
                 duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
                 if not bool(result.get("ok")):
                     tool_output = self.store_tool_output(
@@ -566,6 +663,7 @@ class Runner:
                     function_call=function_call,
                     tool_started_at=tool_started_at,
                     tool_timer_started_at=tool_timer_started_at,
+                    signal=signal,
                 )
                 if waiting_entry is not None:
                     waiting_for.append(waiting_entry)
@@ -605,7 +703,9 @@ class Runner:
         function_call: ProviderFunctionCallOutputItem,
         tool_started_at: object,
         tool_timer_started_at: float,
+        signal: CancellationSignal,
     ) -> WaitingForEntry | None:
+        signal.raise_if_cancelled()
         agent_name = _require_non_empty_string(function_call.arguments.get("agent_name"), "agent_name")
         task = _require_non_empty_string(function_call.arguments.get("task"), "task")
         duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
@@ -674,7 +774,9 @@ class Runner:
             child_agent.id,
             last_agent_sequence=0,
             trace_id=context.trace_id,
+            signal=signal,
         )
+        signal.raise_if_cancelled()
         if child_result.status == "completed":
             output = {
                 "ok": True,
@@ -754,6 +856,7 @@ class Runner:
         function_call: ProviderFunctionCallOutputItem,
         tool_started_at: object,
         tool_timer_started_at: float,
+        signal: CancellationSignal,
     ) -> bool:
         if self.mcp_manager.parse_name(function_call.name) is None:
             return False
@@ -762,9 +865,13 @@ class Runner:
             output = await self.mcp_manager.call_tool(
                 function_call.name,
                 function_call.arguments,
+                signal=signal,
             )
+            signal.raise_if_cancelled()
             result: dict[str, Any] = {"ok": True, "output": output}
             is_error = False
+        except CancellationRequestedError:
+            raise
         except Exception as exc:
             result = {"ok": False, "error": str(exc) or "MCP tool execution failed."}
             is_error = True
@@ -846,12 +953,15 @@ class Runner:
         call_id: str,
         result: dict[str, Any],
         trace_id: str | None = None,
+        signal: CancellationSignal | None = None,
     ) -> RunResult:
+        signal = signal or CancellationSignal()
         context = self.load_agent_context(
             agent_id,
             trace_id=trace_id,
             last_agent_sequence=0,
         )
+        signal.raise_if_cancelled()
         if context.agent.status != AgentStatus.WAITING:
             return RunResult(
                 ok=False,
@@ -891,13 +1001,14 @@ class Runner:
                 call_id=child_agent.waiting_for[0].call_id,
                 result=result,
                 trace_id=context.trace_id,
+                signal=signal,
             )
             if not delegated_result.ok:
                 return delegated_result
             refreshed_agent = self.agent_repository.get(agent_id)
             if refreshed_agent is None:
                 return RunResult(ok=False, status="failed", error=f"Agent disappeared during delivery: {agent_id}")
-            return self._build_run_result_from_agent(refreshed_agent)
+            return self.build_run_result_from_agent(refreshed_agent)
 
         last_sequence = self.item_repository.get_last_sequence(context.agent.id)
         tool_output = self.store_tool_output(
@@ -932,9 +1043,15 @@ class Runner:
             context.agent.id,
             last_agent_sequence=last_sequence,
             trace_id=context.trace_id,
+            signal=signal,
         )
         if run_result.agent is not None:
-            await self._propagate_child_result(run_result.agent, run_result, trace_id=context.trace_id)
+            await self._propagate_child_result(
+                run_result.agent,
+                run_result,
+                trace_id=context.trace_id,
+                signal=signal,
+            )
         return run_result
 
     @staticmethod
@@ -1034,6 +1151,23 @@ class Runner:
 
         return stored_items
 
+    def _store_partial_stream_text(
+        self,
+        agent: Agent,
+        session: Session,
+        text: str,
+    ) -> list[Item]:
+        if not text:
+            return []
+
+        return self.store_provider_output(
+            agent,
+            session,
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text=text)],
+            ),
+        )
+
     def store_tool_output(
         self,
         agent: Agent,
@@ -1114,11 +1248,21 @@ class Runner:
         )
         return self.item_repository.save(item)
 
-    async def _propagate_child_result(self, agent: Agent, run_result: RunResult, *, trace_id: str | None = None) -> None:
+    async def _propagate_child_result(
+        self,
+        agent: Agent,
+        run_result: RunResult,
+        *,
+        trace_id: str | None = None,
+        signal: CancellationSignal | None = None,
+    ) -> None:
         if agent.parent_id is None or agent.source_call_id is None:
             return
-        if run_result.status == "waiting":
+        if run_result.status in {"waiting", "cancelled"}:
             return
+
+        if signal is not None:
+            signal.raise_if_cancelled()
 
         parent_agent = self.agent_repository.get(agent.parent_id)
         if parent_agent is None:
@@ -1176,9 +1320,15 @@ class Runner:
             parent_agent.id,
             last_agent_sequence=last_sequence,
             trace_id=resolved_trace_id,
+            signal=signal,
         )
         if parent_result.agent is not None:
-            await self._propagate_child_result(parent_result.agent, parent_result, trace_id=resolved_trace_id)
+            await self._propagate_child_result(
+                parent_result.agent,
+                parent_result,
+                trace_id=resolved_trace_id,
+                signal=signal,
+            )
 
     @staticmethod
     def _deserialize_arguments(raw_arguments: str | None) -> dict[str, Any]:
@@ -1214,14 +1364,32 @@ class Runner:
             return None
         return " | ".join(descriptions)
 
-    def _build_run_result_from_agent(self, agent: Agent) -> RunResult:
+    def build_run_result_from_agent(self, agent: Agent) -> RunResult:
         if agent.status == AgentStatus.WAITING:
             return RunResult(ok=True, status="waiting", agent=agent)
         if agent.status == AgentStatus.COMPLETED:
             return RunResult(ok=True, status="completed", agent=agent)
+        if agent.status == AgentStatus.CANCELLED:
+            return RunResult(ok=False, status="cancelled", agent=agent)
         if agent.status == AgentStatus.FAILED:
             return RunResult(ok=False, status="failed", agent=agent, error="Agent execution failed.")
         return RunResult(ok=False, status="failed", agent=agent, error=f"Unexpected agent status: {agent.status}")
+
+    def _cancel_run(self, context: AgentRunContext) -> RunResult:
+        context.agent.status = AgentStatus.CANCELLED
+        context.agent.waiting_for = []
+        context.agent.updated_at = utcnow()
+        context.agent = self.agent_repository.save(context.agent)
+        self.event_bus.emit(
+            AgentCancelledEvent(
+                ctx=build_event_context(context.agent, context.trace_id),
+            )
+        )
+        return RunResult(
+            ok=False,
+            status="cancelled",
+            agent=context.agent,
+        )
 
     def _fail_run(self, context: AgentRunContext, *, error: str) -> RunResult:
         context.agent.status = AgentStatus.FAILED
@@ -1268,6 +1436,7 @@ class Runner:
         context: AgentRunContext,
         *,
         model: str,
+        signal: CancellationSignal | None = None,
     ) -> tuple[
         list[ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem],
         ProviderRequest,
@@ -1279,6 +1448,7 @@ class Runner:
             input=request_input,
             tools=context.agent.config.tools or [],
             temperature=context.agent.config.temperature,
+            signal=signal,
         )
         return request_input, request
 

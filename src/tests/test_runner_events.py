@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -36,6 +37,7 @@ from app.providers import (
     ProviderTextOutputItem,
     ProviderUsage,
 )
+from app.runtime.cancellation import CancellationSignal
 from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
 from app.tools.definitions.ask_user import ask_user_tool
@@ -136,6 +138,25 @@ class FakeAgentLoader:
         return agent
 
 
+class BlockingProvider(Provider):
+    async def generate(self, request_data):  # noqa: ANN001
+        signal = request_data.signal
+        if signal is None:
+            raise RuntimeError("Cancellation signal is required for this test.")
+        await signal.wait()
+        signal.raise_if_cancelled()
+        raise AssertionError("Signal should cancel before continuing.")
+
+    async def stream(self, request_data):  # noqa: ANN001
+        signal = request_data.signal
+        if signal is None:
+            raise RuntimeError("Cancellation signal is required for this test.")
+        yield ProviderTextDeltaEvent(delta="Hel")
+        await signal.wait()
+        signal.raise_if_cancelled()
+        raise AssertionError("Signal should cancel before continuing.")
+
+
 @pytest.fixture
 def db_session() -> Session:
     engine = create_engine("sqlite:///:memory:", future=True)
@@ -165,6 +186,7 @@ def make_runner(
     mcp_manager: FakeMcpManager | None = None,
     agent_loader: FakeAgentLoader | None = None,
     model: str = "openrouter:test-model",
+    provider: Provider | None = None,
 ) -> tuple[Runner, str, list[str]]:
     user_repository = UserRepository(db_session)
     session_repository = SessionRepository(db_session)
@@ -237,7 +259,8 @@ def make_runner(
         mcp_manager=mcp_manager or FakeMcpManager(),
         provider_registry=ProviderRegistry(
             {
-                "openrouter": FakeProvider(
+                "openrouter": provider
+                or FakeProvider(
                     list(provider_responses),
                     stream_events=list(provider_streams or []),
                 )
@@ -273,7 +296,6 @@ async def test_runner_emits_happy_path_events_in_order(db_session: Session) -> N
         "turn.completed",
         "agent.completed",
     ]
-
 
 @pytest.mark.asyncio
 async def test_runner_emits_tool_failed_and_continues(db_session: Session) -> None:
@@ -497,6 +519,77 @@ async def test_runner_moves_to_waiting_for_human_tool(db_session: Session) -> No
         "tool.completed",
         "turn.completed",
         "agent.waiting",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_non_stream_run_as_cancelled(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        tools=[],
+        provider=BlockingProvider(),
+    )
+    signal = CancellationSignal()
+
+    task = asyncio.create_task(
+        runner.run_agent(
+            agent_id,
+            last_agent_sequence=0,
+            signal=signal,
+        )
+    )
+    await asyncio.sleep(0)
+    signal.cancel()
+    result = await task
+    agent = AgentRepository(db_session).get(agent_id)
+
+    assert result.status == "cancelled"
+    assert result.ok is False
+    assert agent is not None
+    assert agent.status == AgentStatus.CANCELLED
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "agent.cancelled",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_stream_run_as_cancelled(db_session: Session) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        tools=[],
+        provider=BlockingProvider(),
+    )
+    signal = CancellationSignal()
+    streamed_event_types: list[str] = []
+    streamed_deltas: list[str] = []
+
+    async for event in runner.run_agent_stream(
+        agent_id,
+        last_agent_sequence=0,
+        signal=signal,
+    ):
+        streamed_event_types.append(event.type)
+        if isinstance(event, ProviderTextDeltaEvent):
+            streamed_deltas.append(event.delta)
+        if event.type == "text_delta":
+            signal.cancel()
+
+    agent = AgentRepository(db_session).get(agent_id)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert streamed_event_types == ["text_delta"]
+    assert agent is not None
+    assert agent.status == AgentStatus.CANCELLED
+    assert [item.type.value for item in stored_items] == ["message", "message"]
+    assert stored_items[-1].content == "".join(streamed_deltas)
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "agent.cancelled",
     ]
 
 

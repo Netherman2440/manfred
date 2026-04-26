@@ -25,6 +25,14 @@ class ItemRepository:
         ).all()
         return [self._to_domain(model) for model in models]
 
+    def list_by_session_chronological(self, session_id: str) -> list[Item]:
+        models = self.session.scalars(
+            select(ItemModel)
+            .where(ItemModel.session_id == session_id)
+            .order_by(ItemModel.created_at.asc(), ItemModel.agent_id.asc(), ItemModel.sequence.asc())
+        ).all()
+        return [self._to_domain(model) for model in models]
+
     def list_by_agent(self, agent_id: str) -> list[Item]:
         models = self.session.scalars(
             select(ItemModel)

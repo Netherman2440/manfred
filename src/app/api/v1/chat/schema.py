@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, Field
@@ -49,6 +51,8 @@ class ChatRequest(BaseModel):
 class TextOutputItem(BaseModel):
     type: Literal["text"] = "text"
     text: str
+    agent_id: str | None = None
+    created_at: datetime | None = None
 
 
 class FunctionCallOutputItem(BaseModel):
@@ -56,6 +60,8 @@ class FunctionCallOutputItem(BaseModel):
     call_id: str
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    agent_id: str | None = None
+    created_at: datetime | None = None
 
 
 class FunctionCallResultOutputItem(BaseModel):
@@ -64,6 +70,8 @@ class FunctionCallResultOutputItem(BaseModel):
     name: str
     output: str | None = None
     is_error: bool = False
+    agent_id: str | None = None
+    created_at: datetime | None = None
 
 
 class WaitingForOutputItem(BaseModel):
@@ -84,7 +92,7 @@ class ChatResponse(BaseModel):
     id: str
     agent_id: str
     session_id: str
-    status: Literal["completed", "waiting", "failed"]
+    status: Literal["completed", "waiting", "failed", "cancelled"]
     model: str
     output: list[ChatOutputItem] = Field(default_factory=list)
     waiting_for: list[WaitingForOutputItem] = Field(default_factory=list)
@@ -95,3 +103,10 @@ class DeliverRequest(BaseModel):
     call_id: str = Field(..., min_length=1)
     output: Any = None
     is_error: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class ChatStreamSessionEvent:
+    session_id: str
+    agent_id: str
+    type: str = field(init=False, default="session")

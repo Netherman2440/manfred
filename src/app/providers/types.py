@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.domain.tool import ToolDefinition
+
+if TYPE_CHECKING:
+    from app.runtime.cancellation import CancellationSignal
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,6 +71,7 @@ class ProviderRequest:
     input: list[ProviderInputItem]
     tools: list[ToolDefinition] = field(default_factory=list)
     temperature: float | None = None
+    signal: CancellationSignal | None = None
 
 
 @dataclass(slots=True, frozen=True)
