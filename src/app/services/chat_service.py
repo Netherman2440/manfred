@@ -128,6 +128,11 @@ class ChatService:
         except ChatServiceValidationError:
             self.session.rollback()
             raise
+        except asyncio.CancelledError:
+            self.session.rollback()
+            if active_run is not None:
+                run_result = self._build_cancelled_run_result(active_run.agent_id)
+            raise
         except Exception as exc:
             self.session.rollback()
             if active_run is not None:
@@ -169,6 +174,8 @@ class ChatService:
                 run_result = self.runner.build_run_result_from_agent(agent)
         except asyncio.CancelledError:
             self.session.rollback()
+            if active_run is not None:
+                run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
             self.session.rollback()
@@ -419,6 +426,14 @@ class ChatService:
             status="failed",
             agent=agent,
             error=error,
+        )
+
+    def _build_cancelled_run_result(self, agent_id: str) -> RunResult:
+        agent = self.agent_repository.get(agent_id)
+        return RunResult(
+            ok=False,
+            status="cancelled",
+            agent=agent,
         )
 
     def _load_session(self, session_id: str | None, user_id: str) -> Session:

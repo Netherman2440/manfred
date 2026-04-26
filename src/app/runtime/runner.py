@@ -284,7 +284,7 @@ class Runner:
                     error=f"Unknown provider or model reference: {context.agent.config.model}",
                 )
             else:
-                request_input, request = self._build_provider_request(
+                _request_input, request = self._build_provider_request(
                     context,
                     model=resolved.model,
                     signal=signal,
@@ -532,7 +532,6 @@ class Runner:
                     function_call.arguments,
                     signal=signal,
                 )
-                signal.raise_if_cancelled()
                 tool_output = self.store_tool_output(
                     context.agent,
                     context.session,
@@ -556,6 +555,7 @@ class Runner:
                             start_time=tool_started_at,
                         )
                     )
+                    signal.raise_if_cancelled()
                     continue
 
                 self.event_bus.emit(
@@ -569,6 +569,7 @@ class Runner:
                         start_time=tool_started_at,
                     )
                 )
+                signal.raise_if_cancelled()
                 continue
 
             if tool.type == "human":
@@ -577,7 +578,6 @@ class Runner:
                     function_call.arguments,
                     signal=signal,
                 )
-                signal.raise_if_cancelled()
                 duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
                 if not bool(result.get("ok")):
                     tool_output = self.store_tool_output(
@@ -600,6 +600,7 @@ class Runner:
                             start_time=tool_started_at,
                         )
                     )
+                    signal.raise_if_cancelled()
                     continue
 
                 output = dict(result)
@@ -623,6 +624,7 @@ class Runner:
                         agent_id=context.agent.id,
                     )
                 )
+                signal.raise_if_cancelled()
                 continue
 
             if tool.type == "agent":

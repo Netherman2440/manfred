@@ -7,11 +7,14 @@ import os
 from asyncio.subprocess import PIPE, Process
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.mcp.config import load_mcp_config
 from app.mcp.types import McpConfig, McpServerConfig, McpServerStatus, McpToolInfo, parse_mcp_tool_name
 from app.runtime.cancellation import CancellationRequestedError
+
+if TYPE_CHECKING:
+    from app.runtime.cancellation import CancellationSignal
 
 
 logger = logging.getLogger("app.mcp")
@@ -118,7 +121,7 @@ class _StdioMcpSession:
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        signal: object | None = None,
+        signal: CancellationSignal | None = None,
     ) -> str:
         request_task = asyncio.create_task(
             self._request(
@@ -150,7 +153,7 @@ class _StdioMcpSession:
     async def _await_with_cancellation(
         task: asyncio.Task[dict[str, Any]],
         *,
-        signal: object | None = None,
+        signal: CancellationSignal | None = None,
     ) -> dict[str, Any]:
         if signal is None:
             return await task
@@ -163,10 +166,13 @@ class _StdioMcpSession:
         )
         for pending_task in pending:
             pending_task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
         if cancel_task in done:
             if not task.done():
                 task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             raise CancellationRequestedError("MCP tool execution cancelled.")
 
         return task.result()
@@ -286,6 +292,9 @@ class _StdioMcpSession:
             raise McpClientError(
                 f"MCP server '{self.server_name}' timed out for method '{method}'."
             ) from exc
+        except BaseException:
+            self._pending.pop(request_id, None)
+            raise
 
         error_payload = message.get("error")
         if isinstance(error_payload, dict):
@@ -491,9 +500,8 @@ class StdioMcpManager:
         self,
         prefixed_name: str,
         arguments: dict[str, Any],
-        signal: object | None = None,
+        signal: CancellationSignal | None = None,
     ) -> str:
-        del signal
         parsed_name = self.parse_name(prefixed_name)
         if parsed_name is None:
             raise McpClientError(f"Invalid MCP tool name: {prefixed_name}")
@@ -505,7 +513,7 @@ class StdioMcpManager:
 
         started_at = perf_counter()
         try:
-            output = await session.call_tool(tool_name, arguments)
+            output = await session.call_tool(tool_name, arguments, signal=signal)
         except Exception:
             duration_ms = max(0, int((perf_counter() - started_at) * 1000))
             logger.exception(

@@ -5,7 +5,7 @@ import json
 import threading
 from collections.abc import AsyncIterable, Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib import error, request
 
 from app.domain.tool import FunctionToolDefinition
@@ -28,6 +28,11 @@ from app.providers.types import (
     ProviderUsage,
 )
 from app.runtime.cancellation import CancellationRequestedError
+
+if TYPE_CHECKING:
+    from app.runtime.cancellation import CancellationSignal
+
+_OPENROUTER_HTTP_TIMEOUT_SECONDS = 30.0
 
 
 class OpenRouterProviderError(RuntimeError):
@@ -150,7 +155,10 @@ class OpenRouterProvider(Provider):
         )
 
         try:
-            with request.urlopen(http_request) as response:  # noqa: S310
+            with request.urlopen(
+                http_request,
+                timeout=_OPENROUTER_HTTP_TIMEOUT_SECONDS,
+            ) as response:  # noqa: S310
                 return json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
@@ -164,7 +172,7 @@ class OpenRouterProvider(Provider):
         self,
         payload: dict[str, Any],
         *,
-        signal: Any | None = None,
+        signal: CancellationSignal | None = None,
     ) -> Iterator[ProviderStreamEvent]:
         body = json.dumps(payload).encode("utf-8")
         http_request = request.Request(
@@ -178,7 +186,10 @@ class OpenRouterProvider(Provider):
         )
 
         try:
-            with request.urlopen(http_request) as response:  # noqa: S310
+            with request.urlopen(
+                http_request,
+                timeout=_OPENROUTER_HTTP_TIMEOUT_SECONDS,
+            ) as response:  # noqa: S310
                 lines = (
                     raw_line.decode("utf-8", errors="ignore").rstrip("\r\n")
                     for raw_line in response
@@ -198,7 +209,11 @@ class OpenRouterProvider(Provider):
             yield ProviderErrorEvent(error=str(exc) or "OpenRouter streaming failed.")
 
     @staticmethod
-    def _iter_sse_payloads(lines: Iterable[str], *, signal: Any | None = None) -> Iterator[str]:
+    def _iter_sse_payloads(
+        lines: Iterable[str],
+        *,
+        signal: CancellationSignal | None = None,
+    ) -> Iterator[str]:
         data_lines: list[str] = []
         for raw_line in lines:
             if signal is not None and signal.thread_event.is_set():
@@ -228,7 +243,7 @@ class OpenRouterProvider(Provider):
     async def _await_with_cancellation(
         task: asyncio.Task[Any],
         *,
-        signal: Any | None = None,
+        signal: CancellationSignal | None = None,
         suppress_cancellation: bool = False,
     ) -> Any:
         if signal is None:
@@ -242,10 +257,13 @@ class OpenRouterProvider(Provider):
         )
         for pending_task in pending:
             pending_task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
         if cancel_task in done:
             if not task.done():
                 task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             if suppress_cancellation:
                 return None
             raise CancellationRequestedError("OpenRouter request cancelled.")

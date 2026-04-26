@@ -54,7 +54,7 @@ Out-of-scope:
   - bez zmiany ksztaltu eventow SSE,
   - frontend po zakonczeniu streamu robi refetch sesji i szczegolow.
 
-`POST /api/v1/chat/agents/{agent_id}/cancel`
+`POST /api/v1/chat/sessions/{session_id}/cancel`
 - request body:
   - puste albo minimalne body techniczne; brak danych biznesowych od usera,
 - response:
@@ -152,7 +152,7 @@ Testy:
 
 ### Flow `cancel`
 
-1. Drugi request HTTP wskazuje `agent_id` do anulowania.
+1. Drugi request HTTP wskazuje `session_id` do anulowania.
 2. Service znajduje aktywny run i sygnalizuje cancellation token.
 3. Runner konczy run jako `cancelled`.
 4. Endpoint zwraca aktualny `ChatResponse`.
@@ -182,7 +182,7 @@ Jesli cancel dotyczy root agenta w trakcie delegacji:
 ## Acceptance Criteria
 
 - `ChatResponse.status` obsluguje `cancelled`,
-- istnieje endpoint `POST /api/v1/chat/agents/{agent_id}/cancel`,
+- istnieje endpoint `POST /api/v1/chat/sessions/{session_id}/cancel`,
 - aktywny run przechodzi do `cancelled`, a nie `failed`,
 - po anulowaniu agent nie zostaje w `running`,
 - `run_agent_stream(...)` i `run_agent(...)` przechodza przez ten sam cleanup cancellation,

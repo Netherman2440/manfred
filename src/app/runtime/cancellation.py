@@ -15,6 +15,10 @@ class CancellationSignal:
     def __init__(self) -> None:
         self._event = asyncio.Event()
         self._thread_event = threading.Event()
+        try:
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     @property
     def is_cancelled(self) -> bool:
@@ -26,6 +30,10 @@ class CancellationSignal:
 
     def cancel(self) -> None:
         self._thread_event.set()
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(self._event.set)
+            return
         self._event.set()
 
     async def wait(self) -> None:

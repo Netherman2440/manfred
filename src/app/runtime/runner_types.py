@@ -9,7 +9,7 @@ from app.domain import Agent
 RunStatus = Literal["completed", "waiting", "failed", "cancelled"]
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class RunResult:
     ok: bool
     status: RunStatus

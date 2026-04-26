@@ -406,6 +406,22 @@ def test_cancel_returns_404_for_unknown_session(
     assert response.json()["detail"] == "Session not found: session-missing"
 
 
+def test_cancel_returns_403_for_session_owned_by_other_user(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, test_session_factory = api_client
+    _seed_session_graph(
+        test_session_factory,
+        session_id="session-foreign",
+        user_id="other-user",
+    )
+
+    response = client.post("/api/v1/chat/sessions/session-foreign/cancel", json={})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "User default-user cannot cancel session session-foreign"
+
+
 def test_create_app_configures_cors_for_dynamic_localhost_ports() -> None:
     settings = Settings(
         _env_file=None,
