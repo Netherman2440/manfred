@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.domain.tool import Tool, ToolDefinition, ToolResult
+from app.domain.tool import Tool, ToolDefinition, ToolExecutionContext, ToolResult
 from typing import Any, Iterable
 
 
@@ -31,12 +31,29 @@ class ToolRegistry:
                 resolved.append(tool.definition)
         return resolved
 
-    async def execute(self, name: str, args: dict[str, Any], signal: Any | None = None) -> ToolResult:
+    async def execute(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        context: ToolExecutionContext | None = None,
+        signal: Any | None = None,
+    ) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
             return {"ok": False, "error": f"Tool not found: {name}"}
 
+        if context is None:
+            context = ToolExecutionContext(
+                user_id=None,
+                session_id="",
+                agent_id="",
+                call_id="",
+                tool_name=name,
+                signal=signal,
+            )
+
         try:
-            return await tool.handler(args, signal)
+            return await tool.handler(args, context)
         except Exception as exc:
             return {"ok": False, "error": str(exc) or "Tool execution failed"}

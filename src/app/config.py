@@ -21,6 +21,13 @@ class Settings(BaseSettings):
 
     DEFAULT_AGENT: str = ".agent_data/agents/manfred.agent.md"
     WORKSPACE_PATH: str = ".agent_data"
+    FS_ROOT: str = ""
+    FS_ROOTS: str = (
+        ".agent_data/agents, .agent_data/shared, .agent_data/skills, "
+        ".agent_data/workflows, .agent_data/workspaces"
+    )
+    FS_INCLUDE: str = ""
+    MAX_FILE_SIZE: int = 524288
     MCP_CONFIG_PATH: str = ".mcp.json"
     MCP_TOOL_TIMEOUT_MS: int = 30000
     MAX_DELEGATION_DEPTH: int = 8
@@ -44,3 +51,14 @@ class Settings(BaseSettings):
 
     AI_DEVS_API_KEY: str = ""
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
+
+    def filesystem_roots(self) -> list[str]:
+        roots = [item.strip() for item in self.FS_ROOTS.split(",") if item.strip()]
+        if roots:
+            return roots
+        if self.FS_ROOT.strip():
+            return [self.FS_ROOT.strip()]
+        return []
+
+    def filesystem_include_patterns(self) -> list[str]:
+        return [item.strip() for item in self.FS_INCLUDE.split(",") if item.strip()]

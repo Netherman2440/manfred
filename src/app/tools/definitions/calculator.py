@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, ToolExecutionContext
 
 
 Operation = Literal["add", "subtract", "multiply", "divide"]
@@ -29,9 +29,8 @@ def calculate(*, operation: Operation, a: float, b: float) -> float:
     raise ValueError(f"Unknown operation: {operation}")
 
 
-async def handle_calculator(args: dict[str, Any], signal: Any | None = None) -> dict[str, bool | str]:
-    del signal
-    print('handle calculator')
+async def handle_calculator(args: dict[str, Any], context: ToolExecutionContext) -> dict[str, bool | str]:
+    del context
     operation = args.get("operation")
     if operation not in SUPPORTED_OPERATIONS:
         raise ValueError(f"'operation' must be one of: {', '.join(SUPPORTED_OPERATIONS)}")
