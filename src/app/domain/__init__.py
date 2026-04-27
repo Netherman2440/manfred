@@ -1,7 +1,13 @@
 from app.domain.agent import Agent, AgentConfig
 from app.domain.item import Item
 from app.domain.session import Session
-from app.domain.tool import FunctionToolDefinition, Tool, ToolDefinition, WebSearchToolDefinition
+from app.domain.tool import (
+    FunctionToolDefinition,
+    Tool,
+    ToolDefinition,
+    ToolExecutionContext,
+    WebSearchToolDefinition,
+)
 from app.domain.types import AgentStatus, ItemType, MessageRole, SessionStatus
 from app.domain.user import User
 from app.domain.waiting import WaitingForEntry
@@ -18,6 +24,7 @@ __all__ = [
     "SessionStatus",
     "Tool",
     "ToolDefinition",
+    "ToolExecutionContext",
     "User",
     "WaitingForEntry",
     "WebSearchToolDefinition",
