@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 
 from app.domain import ToolExecutionContext
-from app.filesystem import (
+from app.services.filesystem import (
     AgentFilesystemService,
+    FilesystemManageRequest,
     FilesystemPathResolver,
     FilesystemReadRequest,
     FilesystemSearchRequest,
@@ -17,7 +18,7 @@ from app.filesystem import (
 from app.tools.definitions.filesystem import build_read_file_tool
 
 
-def make_service(tmp_path: Path) -> AgentFilesystemService:
+def make_service(tmp_path: Path, *, exclude_patterns: list[str] | None = None) -> AgentFilesystemService:
     mounts = build_filesystem_mounts(
         repo_root=tmp_path,
         fs_roots=[
@@ -32,6 +33,7 @@ def make_service(tmp_path: Path) -> AgentFilesystemService:
             workspace_mount_names={"workspaces"},
         ),
         max_file_size=1024 * 1024,
+        exclude_patterns=exclude_patterns,
     )
 
 
@@ -164,6 +166,69 @@ async def test_root_listing_uses_workspace_relative_mount_names(tmp_path: Path) 
     )
 
     assert [entry["path"] for entry in listing["entries"]] == ["shared", "workspaces"]
+
+
+@pytest.mark.asyncio
+async def test_fs_exclude_blocks_direct_access_and_hides_entries(tmp_path: Path) -> None:
+    shared_root = tmp_path / ".agent_data" / "shared"
+    (shared_root / "private").mkdir(parents=True)
+    (shared_root / "public").mkdir(parents=True)
+    (shared_root / "private" / "secret.txt").write_text("secret", encoding="utf-8")
+    (shared_root / "public" / "note.txt").write_text("visible secret", encoding="utf-8")
+
+    service = make_service(tmp_path, exclude_patterns=["shared/private/**"])
+
+    listing = await service.read(
+        FilesystemReadRequest(
+            subject=make_subject(),
+            tool_name="read_file",
+            path="shared",
+            mode="list",
+        )
+    )
+    search = await service.search(
+        FilesystemSearchRequest(
+            subject=make_subject(),
+            tool_name="search_file",
+            path="shared",
+            query="secret",
+        )
+    )
+
+    assert [entry["path"] for entry in listing["entries"]] == ["shared/public"]
+    assert [result["path"] for result in search["results"]] == ["shared/public/note.txt"]
+
+    with pytest.raises(FilesystemToolError, match="excluded by filesystem policy"):
+        await service.read(
+            FilesystemReadRequest(
+                subject=make_subject(),
+                tool_name="read_file",
+                path="shared/private/secret.txt",
+                mode="content",
+            )
+        )
+
+    with pytest.raises(FilesystemToolError, match="excluded by filesystem policy"):
+        await service.write(
+            FilesystemWriteRequest(
+                subject=make_subject(),
+                tool_name="write_file",
+                path="shared/private/new.txt",
+                operation="create",
+                content="blocked\n",
+                create_dirs=True,
+            )
+        )
+
+    with pytest.raises(FilesystemToolError, match="excluded by filesystem policy"):
+        await service.manage(
+            FilesystemManageRequest(
+                subject=make_subject(),
+                tool_name="manage_file",
+                path="shared/private",
+                operation="stat",
+            )
+        )
 
 
 @pytest.mark.asyncio

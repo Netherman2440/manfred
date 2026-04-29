@@ -35,6 +35,8 @@ Allowed roots come from `FS_ROOTS` or `FS_ROOT` and default to:
 - `.agent_data/workflows`
 - `.agent_data/workspaces`
 
+Optional `FS_EXCLUDE` patterns can carve out paths inside those roots and are enforced across read, search, write, and manage operations.
+
 The agent-facing contract is workspace-relative: the model should use paths like `agents/foo.agent.md`, `shared/docs/spec.md`, or `workspaces/u-1/note.md` without a leading `/`. Existing `.agent_data/...` paths remain accepted for backward compatibility.
 
 Paths are virtual and must stay inside the configured mounts. Absolute paths and `..` segments are rejected. The `workspaces` mount is additionally scoped per user at runtime.

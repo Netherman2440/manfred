@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         ".agent_data/agents, .agent_data/shared, .agent_data/skills, "
         ".agent_data/workflows, .agent_data/workspaces"
     )
-    FS_INCLUDE: str = ""
+    FS_EXCLUDE: str = ""
     MAX_FILE_SIZE: int = 524288
     MCP_CONFIG_PATH: str = ".mcp.json"
     MCP_TOOL_TIMEOUT_MS: int = 30000
@@ -60,5 +60,5 @@ class Settings(BaseSettings):
             return [self.FS_ROOT.strip()]
         return []
 
-    def filesystem_include_patterns(self) -> list[str]:
-        return [item.strip() for item in self.FS_INCLUDE.split(",") if item.strip()]
+    def filesystem_exclude_patterns(self) -> list[str]:
+        return [item.strip() for item in self.FS_EXCLUDE.split(",") if item.strip()]

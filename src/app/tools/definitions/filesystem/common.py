@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.domain import ToolExecutionContext
-from app.filesystem import FilesystemSubject, FilesystemToolError
+from app.services.filesystem import FilesystemSubject, FilesystemToolError
 
 
 FilesystemAction = Callable[[FilesystemSubject, str], Awaitable[dict[str, Any]]]

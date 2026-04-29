@@ -8,7 +8,17 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.db.base import utcnow
-from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, MessageRole, Session, WaitingForEntry
+from app.domain import (
+    Agent,
+    AgentConfig,
+    AgentStatus,
+    Item,
+    ItemType,
+    MessageRole,
+    Session,
+    ToolExecutionContext,
+    WaitingForEntry,
+)
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
 from app.events import (
     AgentCancelledEvent,
@@ -530,7 +540,11 @@ class Runner:
                 result = await self.tool_registry.execute(
                     function_call.name,
                     function_call.arguments,
-                    signal=signal,
+                    context=self._build_tool_execution_context(
+                        context=context,
+                        function_call=function_call,
+                        signal=signal,
+                    ),
                 )
                 tool_output = self.store_tool_output(
                     context.agent,
@@ -576,7 +590,11 @@ class Runner:
                 result = await self.tool_registry.execute(
                     function_call.name,
                     function_call.arguments,
-                    signal=signal,
+                    context=self._build_tool_execution_context(
+                        context=context,
+                        function_call=function_call,
+                        signal=signal,
+                    ),
                 )
                 duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
                 if not bool(result.get("ok")):
@@ -631,7 +649,11 @@ class Runner:
                 result = await self.tool_registry.execute(
                     function_call.name,
                     function_call.arguments,
-                    signal=signal,
+                    context=self._build_tool_execution_context(
+                        context=context,
+                        function_call=function_call,
+                        signal=signal,
+                    ),
                 )
                 signal.raise_if_cancelled()
                 duration_ms = self._duration_ms(tool_started_at, tool_timer_started_at)
@@ -848,6 +870,22 @@ class Runner:
             )
         )
         return None
+
+    @staticmethod
+    def _build_tool_execution_context(
+        *,
+        context: AgentRunContext,
+        function_call: ProviderFunctionCallOutputItem,
+        signal: CancellationSignal | None,
+    ) -> ToolExecutionContext:
+        return ToolExecutionContext(
+            user_id=context.session.user_id,
+            session_id=context.session.id,
+            agent_id=context.agent.id,
+            call_id=function_call.call_id,
+            tool_name=function_call.name,
+            signal=signal,
+        )
 
     async def _handle_mcp_function_call(
         self,

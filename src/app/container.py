@@ -10,7 +10,7 @@ from app.config import Settings
 from app.domain import Tool
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
-from app.filesystem import (
+from app.services.filesystem import (
     AgentFilesystemService,
     FilesystemPathResolver,
     UserScopedWorkspaceFilesystemPolicy,
@@ -72,7 +72,7 @@ def build_filesystem_service(
         path_resolver=path_resolver,
         access_policy=access_policy,
         max_file_size=settings.MAX_FILE_SIZE,
-        include_patterns=settings.filesystem_include_patterns(),
+        exclude_patterns=settings.filesystem_exclude_patterns(),
     )
 
 

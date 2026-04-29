@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
-from app.filesystem import AgentFilesystemService, FilesystemSearchRequest, FilesystemSubject
+from app.services.filesystem import AgentFilesystemService, FilesystemSearchRequest, FilesystemSubject
 from app.tools.definitions.filesystem.common import run_filesystem_action
 
 
