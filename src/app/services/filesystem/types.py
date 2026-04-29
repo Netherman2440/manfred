@@ -16,6 +16,7 @@ class FilesystemSubject:
     user_id: str | None
     session_id: str
     agent_id: str
+    user_name: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

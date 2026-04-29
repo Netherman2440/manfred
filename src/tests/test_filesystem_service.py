@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from app.domain import ToolExecutionContext
+from app.db.base import utcnow
+from app.domain import Session as DomainSession
+from app.domain import SessionStatus, ToolExecutionContext, User
 from app.services.filesystem import (
     AgentFilesystemService,
     FilesystemManageRequest,
@@ -13,12 +15,17 @@ from app.services.filesystem import (
     FilesystemToolError,
     FilesystemWriteRequest,
     UserScopedWorkspaceFilesystemPolicy,
+    WorkspaceLayoutService,
     build_filesystem_mounts,
 )
 from app.tools.definitions.filesystem import build_read_file_tool
 
 
 def make_service(tmp_path: Path, *, exclude_patterns: list[str] | None = None) -> AgentFilesystemService:
+    workspace_layout_service = WorkspaceLayoutService(
+        repo_root=tmp_path,
+        workspace_path=".agent_data",
+    )
     mounts = build_filesystem_mounts(
         repo_root=tmp_path,
         fs_roots=[
@@ -30,6 +37,7 @@ def make_service(tmp_path: Path, *, exclude_patterns: list[str] | None = None) -
     return AgentFilesystemService(
         path_resolver=FilesystemPathResolver(mounts, workspace_root=".agent_data"),
         access_policy=UserScopedWorkspaceFilesystemPolicy(
+            workspace_layout_service=workspace_layout_service,
             workspace_mount_names={"workspaces"},
         ),
         max_file_size=1024 * 1024,
@@ -37,11 +45,12 @@ def make_service(tmp_path: Path, *, exclude_patterns: list[str] | None = None) -
     )
 
 
-def make_subject(user_id: str = "u-1") -> FilesystemSubject:
+def make_subject(user_id: str = "u-1", user_name: str | None = None) -> FilesystemSubject:
     return FilesystemSubject(
         user_id=user_id,
         session_id="session-1",
         agent_id="agent-1",
+        user_name=user_name,
     )
 
 
@@ -77,16 +86,17 @@ def test_path_resolver_rejects_absolute_parent_and_symlink_escape(tmp_path: Path
 @pytest.mark.asyncio
 async def test_workspace_access_is_scoped_per_user(tmp_path: Path) -> None:
     workspace_root = tmp_path / ".agent_data" / "workspaces"
-    (workspace_root / "u-1").mkdir(parents=True)
-    (workspace_root / "u-2").mkdir(parents=True)
-    (workspace_root / "u-1" / "notes.txt").write_text("alpha\nshared secret\n", encoding="utf-8")
-    (workspace_root / "u-2" / "notes.txt").write_text("beta\nother secret\n", encoding="utf-8")
+    (workspace_root / "alice-example").mkdir(parents=True)
+    (workspace_root / "bob-example").mkdir(parents=True)
+    (workspace_root / "alice-example" / "notes.txt").write_text("alpha\nshared secret\n", encoding="utf-8")
+    (workspace_root / "bob-example" / "notes.txt").write_text("beta\nother secret\n", encoding="utf-8")
 
     service = make_service(tmp_path)
+    subject = make_subject("u-1", "Alice Example")
 
     listing = await service.read(
         FilesystemReadRequest(
-            subject=make_subject("u-1"),
+            subject=subject,
             tool_name="read_file",
             path="workspaces",
             mode="list",
@@ -94,7 +104,7 @@ async def test_workspace_access_is_scoped_per_user(tmp_path: Path) -> None:
     )
     search = await service.search(
         FilesystemSearchRequest(
-            subject=make_subject("u-1"),
+            subject=subject,
             tool_name="search_file",
             path=".",
             query="secret",
@@ -107,12 +117,35 @@ async def test_workspace_access_is_scoped_per_user(tmp_path: Path) -> None:
     with pytest.raises(FilesystemToolError, match="not allowed for the current user"):
         await service.read(
             FilesystemReadRequest(
-                subject=make_subject("u-1"),
+                subject=subject,
                 tool_name="read_file",
-                path="workspaces/u-2/notes.txt",
+                path="workspaces/bob-example/notes.txt",
                 mode="content",
             )
         )
+
+
+def test_workspace_layout_service_creates_session_structure(tmp_path: Path) -> None:
+    service = WorkspaceLayoutService(repo_root=tmp_path, workspace_path=".agent_data")
+    now = utcnow()
+    user = User(id="user-1", name="Anna Kowalska", api_key_hash=None, created_at=now)
+    session = DomainSession(
+        id="session-123",
+        user_id=user.id,
+        root_agent_id=None,
+        status=SessionStatus.ACTIVE,
+        title=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    layout = service.ensure_session_workspace(user=user, session=session)
+
+    assert layout.user_workspace.root == tmp_path / ".agent_data" / "workspaces" / "anna-kowalska"
+    assert layout.user_workspace.agents_root.is_dir()
+    assert layout.input_dir.is_dir()
+    assert layout.output_dir.is_dir()
+    assert layout.notes_file.is_file()
 
 
 @pytest.mark.asyncio

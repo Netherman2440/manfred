@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from app.services.filesystem.types import FilesystemAccessDecision, FilesystemAccessRequest, ResolvedFilesystemPath
+from app.services.filesystem.types import (
+    FilesystemAccessDecision,
+    FilesystemAccessRequest,
+    FilesystemSubject,
+    ResolvedFilesystemPath,
+)
+from app.services.filesystem.workspace_layout import WorkspaceLayoutService
 
 
 class FilesystemAccessPolicy(Protocol):
@@ -11,14 +17,20 @@ class FilesystemAccessPolicy(Protocol):
 
 
 class UserScopedWorkspaceFilesystemPolicy:
-    def __init__(self, *, workspace_mount_names: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        workspace_layout_service: WorkspaceLayoutService,
+        workspace_mount_names: set[str] | None = None,
+    ) -> None:
+        self.workspace_layout_service = workspace_layout_service
         self.workspace_mount_names = workspace_mount_names or set()
 
     async def authorize(self, request: FilesystemAccessRequest) -> FilesystemAccessDecision:
         resolved_target = request.target_resolved_path
         target_effective_path: Path | None = None
 
-        allowed, message, effective_path = self._authorize_path(request.resolved_path, request.subject.user_id)
+        allowed, message, effective_path = self._authorize_path(request.resolved_path, request.subject)
         if not allowed:
             return FilesystemAccessDecision(
                 allowed=False,
@@ -29,7 +41,7 @@ class UserScopedWorkspaceFilesystemPolicy:
         if resolved_target is not None:
             target_allowed, target_message, target_effective_path = self._authorize_path(
                 resolved_target,
-                request.subject.user_id,
+                request.subject,
             )
             if not target_allowed:
                 return FilesystemAccessDecision(
@@ -47,16 +59,20 @@ class UserScopedWorkspaceFilesystemPolicy:
     def _authorize_path(
         self,
         resolved_path: ResolvedFilesystemPath,
-        user_id: str | None,
+        subject: FilesystemSubject,
     ) -> tuple[bool, str | None, Path]:
         mount_root = resolved_path.mount.root.resolve()
         if resolved_path.mount.name not in self.workspace_mount_names:
             return True, None, resolved_path.absolute_path
 
-        if not user_id:
+        if not subject.user_id and not subject.user_name:
             return False, "Filesystem access to workspaces requires a user_id.", resolved_path.absolute_path
 
-        scoped_root = (mount_root / user_id).resolve(strict=False)
+        workspace_layout = self.workspace_layout_service.resolve_user_workspace(
+            user_id=subject.user_id,
+            user_name=subject.user_name,
+        )
+        scoped_root = workspace_layout.root.resolve(strict=False)
         if not scoped_root.is_relative_to(mount_root):
             return False, "Workspace filesystem scope is misconfigured.", resolved_path.absolute_path
 

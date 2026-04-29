@@ -19,7 +19,7 @@ from app.domain import (
     ToolExecutionContext,
     WaitingForEntry,
 )
-from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
+from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import (
     AgentCancelledEvent,
     AgentCompletedEvent,
@@ -85,6 +85,7 @@ class Runner:
         agent_repository: AgentRepository,
         session_repository: SessionRepository,
         item_repository: ItemRepository,
+        user_repository: UserRepository,
         tool_registry: ToolRegistry,
         mcp_manager: McpManager,
         provider_registry: ProviderRegistry,
@@ -95,6 +96,7 @@ class Runner:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
         self.item_repository = item_repository
+        self.user_repository = user_repository
         self.tool_registry = tool_registry
         self.mcp_manager = mcp_manager
         self.provider_registry = provider_registry
@@ -871,21 +873,30 @@ class Runner:
         )
         return None
 
-    @staticmethod
     def _build_tool_execution_context(
+        self,
         *,
         context: AgentRunContext,
         function_call: ProviderFunctionCallOutputItem,
         signal: CancellationSignal | None,
     ) -> ToolExecutionContext:
+        user_name = self._resolve_user_name(context.session.user_id)
         return ToolExecutionContext(
             user_id=context.session.user_id,
+            user_name=user_name,
             session_id=context.session.id,
             agent_id=context.agent.id,
             call_id=function_call.call_id,
             tool_name=function_call.name,
             signal=signal,
         )
+
+    def _resolve_user_name(self, user_id: str | None) -> str | None:
+        if not user_id:
+            return None
+
+        user = self.user_repository.get(user_id)
+        return None if user is None else user.name
 
     async def _handle_mcp_function_call(
         self,

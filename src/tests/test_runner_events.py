@@ -256,6 +256,7 @@ def make_runner(
         agent_repository=agent_repository,
         session_repository=session_repository,
         item_repository=item_repository,
+        user_repository=user_repository,
         tool_registry=ToolRegistry(tools=tools),
         mcp_manager=mcp_manager or FakeMcpManager(),
         provider_registry=ProviderRegistry(
@@ -933,6 +934,7 @@ async def test_runner_passes_tool_execution_context(db_session: Session) -> None
     assert result.ok is True
     assert captured_context is not None
     assert captured_context.user_id == "user-1"
+    assert captured_context.user_name == "User"
     assert captured_context.session_id == "session-1"
     assert captured_context.agent_id == "agent-1"
     assert captured_context.call_id == "call-ctx"

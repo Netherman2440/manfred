@@ -14,6 +14,7 @@ from app.services.filesystem import (
     AgentFilesystemService,
     FilesystemPathResolver,
     UserScopedWorkspaceFilesystemPolicy,
+    WorkspaceLayoutService,
     build_filesystem_mounts,
 )
 from app.mcp import StdioMcpManager
@@ -53,6 +54,7 @@ def build_filesystem_service(
     *,
     settings: Settings,
     repo_root: Path,
+    workspace_layout_service: WorkspaceLayoutService,
 ) -> AgentFilesystemService:
     mounts = build_filesystem_mounts(
         repo_root=repo_root,
@@ -66,6 +68,7 @@ def build_filesystem_service(
         if mount.name == "workspaces" or mount.name.endswith("/workspaces")
     }
     access_policy = UserScopedWorkspaceFilesystemPolicy(
+        workspace_layout_service=workspace_layout_service,
         workspace_mount_names=workspace_mount_names,
     )
     return AgentFilesystemService(
@@ -73,6 +76,17 @@ def build_filesystem_service(
         access_policy=access_policy,
         max_file_size=settings.MAX_FILE_SIZE,
         exclude_patterns=settings.filesystem_exclude_patterns(),
+    )
+
+
+def build_workspace_layout_service(
+    *,
+    settings: Settings,
+    repo_root: Path,
+) -> WorkspaceLayoutService:
+    return WorkspaceLayoutService(
+        repo_root=repo_root,
+        workspace_path=settings.WORKSPACE_PATH,
     )
 
 
@@ -128,6 +142,7 @@ def build_runner(
         agent_repository=AgentRepository(session),
         session_repository=SessionRepository(session),
         item_repository=ItemRepository(session),
+        user_repository=UserRepository(session),
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
         provider_registry=provider_registry,
@@ -147,6 +162,7 @@ def build_chat_service(
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
     active_run_registry: ActiveRunRegistry,
+    workspace_layout_service: WorkspaceLayoutService,
 ) -> ChatService:
     user_repository = UserRepository(session)
     session_repository = SessionRepository(session)
@@ -171,6 +187,7 @@ def build_chat_service(
             agent_loader=agent_loader,
         ),
         active_run_registry=active_run_registry,
+        workspace_layout_service=workspace_layout_service,
     )
 
 
@@ -197,10 +214,16 @@ class Container(containers.DeclarativeContainer):
     session_factory = providers.Singleton(build_session_factory, engine=db_engine)
     db_session = providers.Factory(build_db_session, session_factory=session_factory)
 
+    workspace_layout_service = providers.Singleton(
+        build_workspace_layout_service,
+        settings=settings,
+        repo_root=providers.Callable(get_repo_root),
+    )
     filesystem_service = providers.Singleton(
         build_filesystem_service,
         settings=settings,
         repo_root=providers.Callable(get_repo_root),
+        workspace_layout_service=workspace_layout_service,
     )
     tool_registry = providers.Singleton(
         ToolRegistry,
@@ -245,6 +268,7 @@ class Container(containers.DeclarativeContainer):
         provider_registry=provider_registry,
         event_bus=event_bus,
         active_run_registry=active_run_registry,
+        workspace_layout_service=workspace_layout_service,
     )
     session_query_service = providers.Factory(
         build_session_query_service,
