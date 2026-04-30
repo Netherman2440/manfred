@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Literal, TypeAlias
+
+
+LineSpec: TypeAlias = str | dict[str, int] | list[int] | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -53,7 +56,7 @@ class FilesystemReadRequest:
     tool_name: str
     path: str
     mode: Literal["auto", "tree", "list", "content"] = "auto"
-    lines: Any | None = None
+    lines: LineSpec = None
     depth: int = 2
     limit: int = 200
     offset: int = 0
@@ -91,7 +94,7 @@ class FilesystemWriteRequest:
     operation: Literal["create", "update"]
     content: str | None = None
     action: Literal["replace", "insert_before", "insert_after", "delete_lines"] = "replace"
-    lines: Any | None = None
+    lines: LineSpec = None
     checksum: str | None = None
     dry_run: bool = False
     create_dirs: bool = False

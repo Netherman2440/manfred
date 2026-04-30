@@ -9,14 +9,14 @@ from app.api.v1.chat.schema import ChatRequest, MessageInputItem
 from app.config import Settings
 from app.db.base import Base, utcnow
 from app.db.models import AgentModel, ItemModel, SessionModel, UserModel
-from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, WaitingForEntry
+from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, Session as DomainSession, SessionStatus, WaitingForEntry
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
 from app.providers import ProviderFunctionCallOutputItem, ProviderRegistry, ProviderResponse, ProviderUsage
 from app.runtime.cancellation import ActiveRunRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
-from app.services.chat_service import ChatService
+from app.services.chat_service import ChatService, ChatServiceValidationError
 from app.services.filesystem import WorkspaceLayoutService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
@@ -361,3 +361,58 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
     assert (session_root / "output").is_dir()
     assert (session_root / "notes.md").is_file()
     assert (tmp_path / ".agent_data" / "workspaces" / "default-user" / "agents").is_dir()
+
+
+def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Path) -> None:
+    user_repository = UserRepository(db_session)
+    session_repository = SessionRepository(db_session)
+    agent_repository = AgentRepository(db_session)
+    item_repository = ItemRepository(db_session)
+    workspace_layout_service = WorkspaceLayoutService(
+        repo_root=tmp_path,
+        workspace_path=".agent_data",
+    )
+    chat_service = ChatService(
+        session=db_session,
+        settings=Settings(
+            _env_file=None,
+            DEFAULT_AGENT="ignored",
+            OPEN_ROUTER_LLM_MODEL="test-model",
+            DEFAULT_USER_ID="default-user",
+            DEFAULT_USER_NAME="Default User",
+            LANGFUSE_ENABLED=False,
+        ),
+        agent_loader=FakeAgentLoader(
+            root_agent=LoadedAgent(
+                agent_name="manfred",
+                model="openrouter:test-model",
+                tools=[],
+                system_prompt="Pomagaj uzytkownikowi.",
+            )
+        ),
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        runner=object(),  # type: ignore[arg-type]
+        active_run_registry=ActiveRunRegistry(),
+        workspace_layout_service=workspace_layout_service,
+    )
+
+    now = utcnow()
+    session_repository.save(
+        DomainSession(
+            id="foreign-session",
+            user_id="other-user",
+            root_agent_id=None,
+            status=SessionStatus.ACTIVE,
+            title=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    user = chat_service._ensure_default_user()
+
+    with pytest.raises(ChatServiceValidationError, match="Session not found: foreign-session"):
+        chat_service._load_session("foreign-session", user)

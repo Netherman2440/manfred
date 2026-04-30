@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from app.domain.tool import Tool, ToolDefinition, ToolExecutionContext, ToolResult
+from app.runtime.cancellation import CancellationSignal
 from typing import Any, Iterable
 
 
@@ -37,7 +40,7 @@ class ToolRegistry:
         args: dict[str, Any],
         *,
         context: ToolExecutionContext | None = None,
-        signal: Any | None = None,
+        signal: CancellationSignal | None = None,
     ) -> ToolResult:
         tool = self._tools.get(name)
         if tool is None:
@@ -52,6 +55,14 @@ class ToolRegistry:
                 tool_name=name,
                 signal=signal,
             )
+        else:
+            updates: dict[str, object] = {}
+            if context.tool_name != name:
+                updates["tool_name"] = name
+            if signal is not None and context.signal is None:
+                updates["signal"] = signal
+            if updates:
+                context = replace(context, **updates)
 
         try:
             return await tool.handler(args, context)

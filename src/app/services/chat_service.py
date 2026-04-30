@@ -458,6 +458,8 @@ class ChatService:
         session = self.session_repository.get(session_id)
         if session is None:
             raise ChatServiceValidationError(f"Session not found: {session_id}")
+        if session.user_id != user.id:
+            raise ChatServiceValidationError(f"Session not found: {session_id}")
         return session
 
     def _resolve_agent_config(self, request_config: ChatAgentConfigInput | None) -> ResolvedAgentConfig:

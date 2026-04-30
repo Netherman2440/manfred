@@ -4,7 +4,7 @@ from typing import Any
 
 from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.services.filesystem import AgentFilesystemService, FilesystemSearchRequest, FilesystemSubject
-from app.tools.definitions.filesystem.common import run_filesystem_action
+from app.tools.definitions.filesystem.common import normalize_string_list, run_filesystem_action
 
 
 SEARCH_FILE_PARAMETERS = {
@@ -50,7 +50,7 @@ def build_search_file_tool(filesystem_service: AgentFilesystemService) -> Tool:
                     whole_word=bool(args.get("wholeWord", False)),
                     multiline=bool(args.get("multiline", False)),
                     depth=int(args.get("depth", 8)),
-                    types=_string_list(args.get("types")),
+                    types=normalize_string_list(args.get("types")),
                     glob=args.get("glob"),
                     exclude=args.get("exclude"),
                     max_results=int(args.get("maxResults", 50)),
@@ -72,11 +72,3 @@ def build_search_file_tool(filesystem_service: AgentFilesystemService) -> Tool:
         ),
         handler=handle_search_file,
     )
-
-
-def _string_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]

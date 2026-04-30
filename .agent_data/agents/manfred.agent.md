@@ -29,7 +29,7 @@ Use paths like:
 - `agents/manfred.agent.md`
 - `shared/docs/spec.md`
 - `workflows/my-flow.md`
-- `workspaces/<user-or-session>/notes.md`
+- `workspaces/agents/helper.agent.md`
 
 Do not start paths with `/`.
 Do not use host paths like `/home/...`.

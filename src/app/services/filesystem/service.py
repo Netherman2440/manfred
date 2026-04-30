@@ -845,9 +845,11 @@ class AgentFilesystemService:
         except re.error as exc:
             raise FilesystemToolError(f"Invalid regex pattern: {exc.msg}") from exc
 
+        lines = text.splitlines()
         for match in compiled.finditer(text):
             line_number = text.count("\n", 0, match.start()) + 1
-            line_text = text.splitlines()[line_number - 1] if text.splitlines() else ""
+            line_index = line_number - 1
+            line_text = lines[line_index] if 0 <= line_index < len(lines) else ""
             snippets.append({"line": line_number, "text": line_text})
             if len(snippets) >= 3:
                 break

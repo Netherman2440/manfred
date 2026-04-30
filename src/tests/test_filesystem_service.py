@@ -86,10 +86,10 @@ def test_path_resolver_rejects_absolute_parent_and_symlink_escape(tmp_path: Path
 @pytest.mark.asyncio
 async def test_workspace_access_is_scoped_per_user(tmp_path: Path) -> None:
     workspace_root = tmp_path / ".agent_data" / "workspaces"
-    (workspace_root / "alice-example").mkdir(parents=True)
-    (workspace_root / "bob-example").mkdir(parents=True)
-    (workspace_root / "alice-example" / "notes.txt").write_text("alpha\nshared secret\n", encoding="utf-8")
-    (workspace_root / "bob-example" / "notes.txt").write_text("beta\nother secret\n", encoding="utf-8")
+    (workspace_root / "alice-example-u-1").mkdir(parents=True)
+    (workspace_root / "bob-example-u-2").mkdir(parents=True)
+    (workspace_root / "alice-example-u-1" / "notes.txt").write_text("alpha\nshared secret\n", encoding="utf-8")
+    (workspace_root / "bob-example-u-2" / "notes.txt").write_text("beta\nother secret\n", encoding="utf-8")
 
     service = make_service(tmp_path)
     subject = make_subject("u-1", "Alice Example")
@@ -119,7 +119,7 @@ async def test_workspace_access_is_scoped_per_user(tmp_path: Path) -> None:
             FilesystemReadRequest(
                 subject=subject,
                 tool_name="read_file",
-                path="workspaces/bob-example/notes.txt",
+                path="workspaces/bob-example-u-2/notes.txt",
                 mode="content",
             )
         )
@@ -141,11 +141,21 @@ def test_workspace_layout_service_creates_session_structure(tmp_path: Path) -> N
 
     layout = service.ensure_session_workspace(user=user, session=session)
 
-    assert layout.user_workspace.root == tmp_path / ".agent_data" / "workspaces" / "anna-kowalska"
+    assert layout.user_workspace.root == tmp_path / ".agent_data" / "workspaces" / "anna-kowalska-user-1"
     assert layout.user_workspace.agents_root.is_dir()
     assert layout.input_dir.is_dir()
     assert layout.output_dir.is_dir()
     assert layout.notes_file.is_file()
+
+
+def test_workspace_layout_service_uses_user_id_to_disambiguate_same_name(tmp_path: Path) -> None:
+    service = WorkspaceLayoutService(repo_root=tmp_path, workspace_path=".agent_data")
+
+    first = service.resolve_user_workspace(user_id="u-1", user_name="Jan Kowalski")
+    second = service.resolve_user_workspace(user_id="u-2", user_name="Jan Kowalski")
+
+    assert first.workspace_key == "jan-kowalski-u-1"
+    assert second.workspace_key == "jan-kowalski-u-2"
 
 
 @pytest.mark.asyncio

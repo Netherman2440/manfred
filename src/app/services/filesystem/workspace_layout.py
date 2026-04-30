@@ -101,10 +101,15 @@ class WorkspaceLayoutService:
         user_id: str | None,
         user_name: str | None,
     ) -> str:
-        for raw_value in (user_name, user_id):
-            normalized = self._normalize_segment(raw_value)
-            if normalized:
-                return normalized
+        normalized_name = self._normalize_segment(user_name)
+        normalized_user_id = self._normalize_segment(user_id)
+
+        if normalized_name and normalized_user_id and normalized_name != normalized_user_id:
+            return f"{normalized_name}-{normalized_user_id}"
+        if normalized_name:
+            return normalized_name
+        if normalized_user_id:
+            return normalized_user_id
         raise ValueError("Unable to resolve workspace directory for user.")
 
     @staticmethod

@@ -126,17 +126,17 @@ Przyklad docelowy:
 
 ## Rekomendowana architektura
 
-### 1. `src/app/filesystem/`
+### 1. `src/app/services/filesystem/`
 
 Nowy pakiet aplikacyjny dla calej domeny filesystem tools.
 
 Rekomendowany podzial:
-- `src/app/filesystem/types.py`
-- `src/app/filesystem/paths.py`
-- `src/app/filesystem/policy.py`
-- `src/app/filesystem/service.py`
-- opcjonalnie `src/app/filesystem/search.py`
-- opcjonalnie `src/app/filesystem/diff.py`
+- `src/app/services/filesystem/types.py`
+- `src/app/services/filesystem/paths.py`
+- `src/app/services/filesystem/policy.py`
+- `src/app/services/filesystem/service.py`
+- opcjonalnie `src/app/services/filesystem/search.py`
+- opcjonalnie `src/app/services/filesystem/diff.py`
 
 ### 2. `types.py`
 
@@ -154,19 +154,19 @@ Wazne: modele odpowiedzi nie musza byc identyczne klasowo do referencji, ale pow
 
 Odpowiada za:
 - parse `FS_ROOTS` i fallback `FS_ROOT`,
-- parse `FS_INCLUDE`,
+- parse `FS_EXCLUDE`,
 - wartosci typu `MAX_FILE_SIZE`,
 - ewentualne defaulty search/write.
 
 Wymaganie repo:
 - app code korzysta z `Settings`, nie z `os.environ`,
 - dlatego `Settings` powinien byc jedynym kanonicznym miejscem dla tych zmiennych,
-- nie dodajemy osobnego `src/app/filesystem/config.py`.
+- nie dodajemy osobnego `src/app/services/filesystem/config.py`.
 
 Rekomendacja:
 - dodac potrzebne pola bezposrednio do `src/app/config.py`,
 - utrzymac wsparcie dla env `FS_ROOTS` i fallback `FS_ROOT`,
-- trzymac tam tez `MAX_FILE_SIZE` i `FS_INCLUDE`, jesli wejda do pierwszej wersji.
+- trzymac tam tez `MAX_FILE_SIZE` i `FS_EXCLUDE`, jesli wejda do pierwszej wersji.
 
 ### 4. `paths.py`
 
@@ -418,7 +418,7 @@ Out-of-scope:
 ## Otwarte decyzje do zamkniecia przy implementacji
 
 - Jak dokladnie modelujemy `FS_ROOTS` w `src/app/config.py`: pojedynczy string kompatybilny z env czy od razu pole znormalizowane do listy.
-- Czy `respectIgnore` i `FS_INCLUDE` wchodza juz w pierwszym PR, czy po bazowej migracji read/search/write/manage.
+- Czy `respectIgnore` i `FS_EXCLUDE` wchodza juz w pierwszym PR, czy po bazowej migracji read/search/write/manage.
 
 Ustalone:
 - `.mcp.json` zostaje w repo,

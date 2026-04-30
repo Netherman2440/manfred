@@ -4,7 +4,7 @@ from typing import Any
 
 from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.services.filesystem import AgentFilesystemService, FilesystemReadRequest, FilesystemSubject
-from app.tools.definitions.filesystem.common import run_filesystem_action
+from app.tools.definitions.filesystem.common import normalize_string_list, run_filesystem_action
 
 
 READ_FILE_PARAMETERS = {
@@ -47,7 +47,7 @@ def build_read_file_tool(filesystem_service: AgentFilesystemService) -> Tool:
                     limit=int(args.get("limit", 200)),
                     offset=int(args.get("offset", 0)),
                     details=bool(args.get("details", False)),
-                    types=_string_list(args.get("types")),
+                    types=normalize_string_list(args.get("types")),
                     glob=args.get("glob"),
                     exclude=args.get("exclude"),
                     respect_ignore=bool(args.get("respectIgnore", True)),
@@ -69,11 +69,3 @@ def build_read_file_tool(filesystem_service: AgentFilesystemService) -> Tool:
         ),
         handler=handle_read_file,
     )
-
-
-def _string_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    return [str(value)]

@@ -6,7 +6,7 @@ Aktualny prompt agenta mówi o katalogach wewnątrz `.agent_data` jako `agents/`
 
 ## In scope
 
-- `src/app/filesystem/paths.py`
+- `src/app/services/filesystem/paths.py`
 - `src/app/container.py`
 - `src/app/tools/definitions/filesystem/*.py`
 - `.agent_data/agents/*.agent.md`

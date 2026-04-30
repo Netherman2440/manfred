@@ -53,11 +53,11 @@ class Settings(BaseSettings):
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
 
     def filesystem_roots(self) -> list[str]:
+        if self.FS_ROOT.strip():
+            return [self.FS_ROOT.strip()]
         roots = [item.strip() for item in self.FS_ROOTS.split(",") if item.strip()]
         if roots:
             return roots
-        if self.FS_ROOT.strip():
-            return [self.FS_ROOT.strip()]
         return []
 
     def filesystem_exclude_patterns(self) -> list[str]:

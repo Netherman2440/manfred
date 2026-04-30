@@ -14,7 +14,7 @@ MANAGE_FILE_PARAMETERS = {
             "type": "string",
             "description": (
                 "Source path relative to workspace root '.agent_data', for example "
-                "'agents/manfred.agent.md' or 'workspaces/u-1/note.md'. Do not start with '/'."
+                "'agents/manfred.agent.md' or 'workspaces/agents/helper.agent.md'. Do not start with '/'."
             ),
         },
         "operation": {"type": "string", "enum": ["delete", "rename", "move", "copy", "mkdir", "stat"]},
