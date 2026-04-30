@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.tool import FunctionToolDefinition, Tool
+from app.domain.tool import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.utils.string_validator import _require_non_empty_string
 
 
-async def handle_ask_user(args: dict[str, Any], signal: Any | None = None) -> dict[str, bool | str]:
-    del signal
+async def handle_ask_user(args: dict[str, Any], context: ToolExecutionContext) -> dict[str, bool | str]:
+    del context
     question = _require_non_empty_string(args.get("question"), "question")
     return {"ok": True, "output": question}
 

@@ -44,6 +44,7 @@ from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, Cancell
 from app.runtime.runner import Runner
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
+from app.services.filesystem import WorkspaceLayoutService
 from app.providers import ProviderErrorEvent, ProviderStreamEvent
 
 
@@ -92,6 +93,7 @@ class ChatService:
         item_repository: ItemRepository,
         runner: Runner,
         active_run_registry: ActiveRunRegistry,
+        workspace_layout_service: WorkspaceLayoutService,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -102,6 +104,7 @@ class ChatService:
         self.item_repository = item_repository
         self.runner = runner
         self.active_run_registry = active_run_registry
+        self.workspace_layout_service = workspace_layout_service
 
     async def process_chat(self, chat_request: ChatRequest) -> ChatResponse:
         active_run: ActiveRunHandle | None = None
@@ -237,7 +240,7 @@ class ChatService:
     async def prepare_chat(self, chat_request: ChatRequest) -> PreparedChatSetupResult:
         try:
             user = self._ensure_default_user() #TODO: Get real user
-            session = self._load_session(chat_request.session_id, user.id)
+            session = self._load_session(chat_request.session_id, user)
             resolved_config = self._resolve_agent_config(chat_request.agent_config)
             trace_id = uuid4().hex
             agent = self._resolve_session_root_agent(session, resolved_config, trace_id=trace_id)
@@ -436,22 +439,26 @@ class ChatService:
             agent=agent,
         )
 
-    def _load_session(self, session_id: str | None, user_id: str) -> Session:
+    def _load_session(self, session_id: str | None, user: User) -> Session:
         if not session_id:
             now = utcnow()
             session = Session(
                 id=uuid4().hex,
-                user_id=user_id,
+                user_id=user.id,
                 root_agent_id=None,
                 status=SessionStatus.ACTIVE,
                 title=None,
                 created_at=now,
                 updated_at=now,
             )
-            return self.session_repository.save(session)
+            saved_session = self.session_repository.save(session)
+            self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
+            return saved_session
 
         session = self.session_repository.get(session_id)
         if session is None:
+            raise ChatServiceValidationError(f"Session not found: {session_id}")
+        if session.user_id != user.id:
             raise ChatServiceValidationError(f"Session not found: {session_id}")
         return session
 

@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -8,14 +9,15 @@ from app.api.v1.chat.schema import ChatRequest, MessageInputItem
 from app.config import Settings
 from app.db.base import Base, utcnow
 from app.db.models import AgentModel, ItemModel, SessionModel, UserModel
-from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, WaitingForEntry
+from app.domain import Agent, AgentConfig, AgentStatus, Item, ItemType, Session as DomainSession, SessionStatus, WaitingForEntry
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
 from app.events import EventBus
 from app.providers import ProviderFunctionCallOutputItem, ProviderRegistry, ProviderResponse, ProviderUsage
 from app.runtime.cancellation import ActiveRunRegistry
 from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
-from app.services.chat_service import ChatService
+from app.services.chat_service import ChatService, ChatServiceValidationError
+from app.services.filesystem import WorkspaceLayoutService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
@@ -191,7 +193,10 @@ def test_append_waiting_tool_results_exposes_waiting_question() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_chat_include_tool_result_returns_session_trace_for_delegation(db_session: Session) -> None:
+async def test_process_chat_include_tool_result_returns_session_trace_for_delegation(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
     user_repository = UserRepository(db_session)
     session_repository = SessionRepository(db_session)
     agent_repository = AgentRepository(db_session)
@@ -217,6 +222,7 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
         agent_repository=agent_repository,
         session_repository=session_repository,
         item_repository=item_repository,
+        user_repository=user_repository,
         tool_registry=tool_registry,
         mcp_manager=FakeMcpManager(),
         provider_registry=ProviderRegistry(
@@ -271,6 +277,10 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
         item_repository=item_repository,
         runner=runner,
         active_run_registry=ActiveRunRegistry(),
+        workspace_layout_service=WorkspaceLayoutService(
+            repo_root=tmp_path,
+            workspace_path=".agent_data",
+        ),
     )
 
     response = await chat_service.process_chat(
@@ -295,3 +305,114 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
     assert response.output[0].created_at is not None
     assert response.output[1].created_at is not None
     assert response.output[2].created_at is None
+
+
+def test_load_session_creates_workspace_layout_for_new_session(db_session: Session, tmp_path: Path) -> None:
+    user_repository = UserRepository(db_session)
+    session_repository = SessionRepository(db_session)
+    agent_repository = AgentRepository(db_session)
+    item_repository = ItemRepository(db_session)
+    workspace_layout_service = WorkspaceLayoutService(
+        repo_root=tmp_path,
+        workspace_path=".agent_data",
+    )
+    chat_service = ChatService(
+        session=db_session,
+        settings=Settings(
+            _env_file=None,
+            DEFAULT_AGENT="ignored",
+            OPEN_ROUTER_LLM_MODEL="test-model",
+            DEFAULT_USER_ID="default-user",
+            DEFAULT_USER_NAME="Default User",
+            LANGFUSE_ENABLED=False,
+        ),
+        agent_loader=FakeAgentLoader(
+            root_agent=LoadedAgent(
+                agent_name="manfred",
+                model="openrouter:test-model",
+                tools=[],
+                system_prompt="Pomagaj uzytkownikowi.",
+            )
+        ),
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        runner=object(),  # type: ignore[arg-type]
+        active_run_registry=ActiveRunRegistry(),
+        workspace_layout_service=workspace_layout_service,
+    )
+
+    user = chat_service._ensure_default_user()
+    session = chat_service._load_session(None, user)
+
+    session_root = (
+        tmp_path
+        / ".agent_data"
+        / "workspaces"
+        / "default-user"
+        / "sessions"
+        / session.created_at.strftime("%Y")
+        / session.created_at.strftime("%m")
+        / session.created_at.strftime("%d")
+        / session.id
+    )
+    assert (session_root / "input").is_dir()
+    assert (session_root / "output").is_dir()
+    assert (session_root / "notes.md").is_file()
+    assert (tmp_path / ".agent_data" / "workspaces" / "default-user" / "agents").is_dir()
+
+
+def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Path) -> None:
+    user_repository = UserRepository(db_session)
+    session_repository = SessionRepository(db_session)
+    agent_repository = AgentRepository(db_session)
+    item_repository = ItemRepository(db_session)
+    workspace_layout_service = WorkspaceLayoutService(
+        repo_root=tmp_path,
+        workspace_path=".agent_data",
+    )
+    chat_service = ChatService(
+        session=db_session,
+        settings=Settings(
+            _env_file=None,
+            DEFAULT_AGENT="ignored",
+            OPEN_ROUTER_LLM_MODEL="test-model",
+            DEFAULT_USER_ID="default-user",
+            DEFAULT_USER_NAME="Default User",
+            LANGFUSE_ENABLED=False,
+        ),
+        agent_loader=FakeAgentLoader(
+            root_agent=LoadedAgent(
+                agent_name="manfred",
+                model="openrouter:test-model",
+                tools=[],
+                system_prompt="Pomagaj uzytkownikowi.",
+            )
+        ),
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        runner=object(),  # type: ignore[arg-type]
+        active_run_registry=ActiveRunRegistry(),
+        workspace_layout_service=workspace_layout_service,
+    )
+
+    now = utcnow()
+    session_repository.save(
+        DomainSession(
+            id="foreign-session",
+            user_id="other-user",
+            root_agent_id=None,
+            status=SessionStatus.ACTIVE,
+            title=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    user = chat_service._ensure_default_user()
+
+    with pytest.raises(ChatServiceValidationError, match="Session not found: foreign-session"):
+        chat_service._load_session("foreign-session", user)

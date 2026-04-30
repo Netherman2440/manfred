@@ -18,6 +18,7 @@ from app.domain import (
     Session as DomainSession,
     SessionStatus,
     Tool,
+    ToolExecutionContext,
     User,
 )
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
@@ -255,6 +256,7 @@ def make_runner(
         agent_repository=agent_repository,
         session_repository=session_repository,
         item_repository=item_repository,
+        user_repository=user_repository,
         tool_registry=ToolRegistry(tools=tools),
         mcp_manager=mcp_manager or FakeMcpManager(),
         provider_registry=ProviderRegistry(
@@ -299,8 +301,11 @@ async def test_runner_emits_happy_path_events_in_order(db_session: Session) -> N
 
 @pytest.mark.asyncio
 async def test_runner_emits_tool_failed_and_continues(db_session: Session) -> None:
-    async def failing_tool(arguments: dict[str, object], signal: object | None) -> dict[str, object]:
-        del signal
+    async def failing_tool(
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+    ) -> dict[str, object]:
+        del context
         return {"ok": False, "error": f"calculator failed for {arguments['value']}"}
 
     runner, agent_id, event_types = make_runner(
@@ -783,8 +788,11 @@ async def test_runner_stream_emits_text_events_and_persists_output(db_session: S
 
 @pytest.mark.asyncio
 async def test_runner_stream_continues_after_tool_call(db_session: Session) -> None:
-    async def calculator(arguments: dict[str, object], signal: object | None) -> dict[str, object]:
-        del signal
+    async def calculator(
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+    ) -> dict[str, object]:
+        del context
         return {"ok": True, "output": f"{arguments['value']}"}
 
     runner, agent_id, event_types = make_runner(
@@ -875,6 +883,63 @@ async def test_runner_stream_continues_after_tool_call(db_session: Session) -> N
         "turn.completed",
         "agent.completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_tool_execution_context(db_session: Session) -> None:
+    captured_context: ToolExecutionContext | None = None
+
+    async def capture_tool(
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+    ) -> dict[str, object]:
+        nonlocal captured_context
+        del arguments
+        captured_context = context
+        return {"ok": True, "output": "captured"}
+
+    runner, agent_id, _event_types = make_runner(
+        db_session,
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-ctx",
+                        name="capture",
+                        arguments={"value": 7},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Recovered answer")],
+                usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+            ),
+        ],
+        tools=[
+            Tool(
+                type="sync",
+                definition=FunctionToolDefinition(
+                    name="capture",
+                    description="Capture context",
+                    parameters={"type": "object"},
+                ),
+                handler=capture_tool,
+            )
+        ],
+    )
+
+    result = await runner.run_agent(agent_id, last_agent_sequence=0)
+
+    assert result.ok is True
+    assert captured_context is not None
+    assert captured_context.user_id == "user-1"
+    assert captured_context.user_name == "User"
+    assert captured_context.session_id == "session-1"
+    assert captured_context.agent_id == "agent-1"
+    assert captured_context.call_id == "call-ctx"
+    assert captured_context.tool_name == "capture"
+    assert captured_context.signal is not None
 
 
 def test_runner_uses_last_new_user_message_for_run_input() -> None:
