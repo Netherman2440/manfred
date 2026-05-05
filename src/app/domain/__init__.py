@@ -1,5 +1,6 @@
 from app.domain.agent import Agent, AgentConfig
-from app.domain.item import Item
+from app.domain.item import Attachment, Item
+from app.domain.queued_input import QueuedInput, QueuedInputAttachment
 from app.domain.session import Session
 from app.domain.tool import (
     FunctionToolDefinition,
@@ -16,10 +17,13 @@ __all__ = [
     "Agent",
     "AgentConfig",
     "AgentStatus",
+    "Attachment",
     "FunctionToolDefinition",
     "Item",
     "ItemType",
     "MessageRole",
+    "QueuedInput",
+    "QueuedInputAttachment",
     "Session",
     "SessionStatus",
     "Tool",

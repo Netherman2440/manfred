@@ -5,6 +5,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.api.v1.chat.schema import AttachmentSchema
+
 
 class SessionListEntrySchema(BaseModel):
     id: str
@@ -70,6 +72,8 @@ class SessionMessageItemSchema(BaseModel):
     type: Literal["message"] = "message"
     role: Literal["user", "assistant", "system"]
     content: str
+    attachments: list[AttachmentSchema] = Field(default_factory=list)
+    edited_at: datetime | None = None
     created_at: datetime
 
 

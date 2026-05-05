@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Settings
 from app.domain import Tool
-from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
+from app.domain.repositories import (
+    AgentRepository,
+    ItemRepository,
+    QueuedInputRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.events import EventBus
 from app.services.filesystem import (
     AgentFilesystemService,
@@ -21,8 +27,10 @@ from app.mcp import StdioMcpManager
 from app.observability import build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.cancellation import ActiveRunRegistry
+from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
+from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
 from app.services.session_query_service import SessionQueryService
 from app.tools.definitions.ask_user import ask_user_tool
@@ -137,6 +145,7 @@ def build_runner(
     provider_registry: ProviderRegistry,
     event_bus: EventBus,
     agent_loader: AgentLoader,
+    message_queue: SessionMessageQueue,
 ) -> Runner:
     return Runner(
         agent_repository=AgentRepository(session),
@@ -149,6 +158,7 @@ def build_runner(
         event_bus=event_bus,
         agent_loader=agent_loader,
         max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
+        message_queue=message_queue,
     )
 
 
@@ -163,11 +173,17 @@ def build_chat_service(
     event_bus: EventBus,
     active_run_registry: ActiveRunRegistry,
     workspace_layout_service: WorkspaceLayoutService,
+    attachment_storage_service: ChatAttachmentStorageService,
 ) -> ChatService:
     user_repository = UserRepository(session)
     session_repository = SessionRepository(session)
     agent_repository = AgentRepository(session)
     item_repository = ItemRepository(session)
+    queued_input_repository = QueuedInputRepository(session)
+    message_queue = SessionMessageQueue(
+        queued_input_repository=queued_input_repository,
+        item_repository=item_repository,
+    )
 
     return ChatService(
         session=session,
@@ -177,6 +193,7 @@ def build_chat_service(
         session_repository=session_repository,
         agent_repository=agent_repository,
         item_repository=item_repository,
+        queued_input_repository=queued_input_repository,
         runner=build_runner(
             session=session,
             settings=settings,
@@ -185,9 +202,12 @@ def build_chat_service(
             provider_registry=provider_registry,
             event_bus=event_bus,
             agent_loader=agent_loader,
+            message_queue=message_queue,
         ),
         active_run_registry=active_run_registry,
         workspace_layout_service=workspace_layout_service,
+        attachment_storage_service=attachment_storage_service,
+        message_queue=message_queue,
     )
 
 
@@ -218,6 +238,10 @@ class Container(containers.DeclarativeContainer):
         build_workspace_layout_service,
         settings=settings,
         repo_root=providers.Callable(get_repo_root),
+    )
+    chat_attachment_storage_service = providers.Singleton(
+        ChatAttachmentStorageService,
+        workspace_layout_service=workspace_layout_service,
     )
     filesystem_service = providers.Singleton(
         build_filesystem_service,
@@ -269,6 +293,7 @@ class Container(containers.DeclarativeContainer):
         event_bus=event_bus,
         active_run_registry=active_run_registry,
         workspace_layout_service=workspace_layout_service,
+        attachment_storage_service=chat_attachment_storage_service,
     )
     session_query_service = providers.Factory(
         build_session_query_service,

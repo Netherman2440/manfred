@@ -93,3 +93,6 @@ class ActiveRunRegistry:
             return
 
         handle.completion.set_result(result)
+
+    def is_active(self, agent_id: str) -> bool:
+        return agent_id in self._handles
