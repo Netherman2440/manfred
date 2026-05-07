@@ -216,7 +216,10 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, list[Incom
             attachments,
         )
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise ChatServiceValidationError(f"Invalid JSON body: {exc}") from exc
     return ChatRequest.model_validate(body), []
 
 
@@ -232,7 +235,10 @@ async def _parse_edit_request(request: Request) -> tuple[ChatEditRequest, list[I
             await _parse_form_attachments(form),
         )
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise ChatServiceValidationError(f"Invalid JSON body: {exc}") from exc
     return ChatEditRequest.model_validate(body), []
 
 
@@ -244,7 +250,10 @@ async def _parse_queue_request(request: Request) -> tuple[ChatQueueRequest, list
             await _parse_form_attachments(form),
         )
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise ChatServiceValidationError(f"Invalid JSON body: {exc}") from exc
     return ChatQueueRequest.model_validate(body), []
 
 

@@ -38,6 +38,7 @@ class QueuedInputRepository:
         model = self.session.get(QueuedInputModel, queued_input.id)
         if model is None:
             model = QueuedInputModel(id=queued_input.id)
+            self.session.add(model)
 
         model.session_id = queued_input.session_id
         model.agent_id = queued_input.agent_id
@@ -54,16 +55,14 @@ class QueuedInputRepository:
         model.accepted_at = queued_input.accepted_at
         model.consumed_at = queued_input.consumed_at
 
-        self.session.add(model)
         self.session.flush()
         return self._to_domain(model)
 
-    def consume(self, queued_input_id: str, consumed_at) -> QueuedInput | None:  # noqa: ANN001
+    def consume(self, queued_input_id: str, consumed_at) -> QueuedInput | None:
         model = self.session.get(QueuedInputModel, queued_input_id)
         if model is None:
             return None
         model.consumed_at = consumed_at
-        self.session.add(model)
         self.session.flush()
         return self._to_domain(model)
 
