@@ -325,7 +325,8 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
             workspace_layout_service=WorkspaceLayoutService(
                 repo_root=tmp_path,
                 workspace_path=".agent_data",
-            )
+            ),
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=QueuedInputRepository(db_session),
@@ -394,6 +395,7 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=QueuedInputRepository(db_session),
@@ -457,6 +459,7 @@ def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Pat
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=QueuedInputRepository(db_session),
@@ -552,6 +555,7 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=queued_input_repository,
@@ -782,6 +786,7 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=queued_input_repository,
@@ -893,6 +898,7 @@ async def test_process_queue_persists_pending_input_for_waiting_root_agent(
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
         ),
         message_queue=SessionMessageQueue(
             queued_input_repository=queued_input_repository,
