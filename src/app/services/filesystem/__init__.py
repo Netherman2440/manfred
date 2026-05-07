@@ -1,7 +1,7 @@
-from app.services.filesystem.paths import FilesystemPathResolver, build_filesystem_mounts
+from app.services.filesystem.paths import FilesystemPathResolver, build_mounts
 from app.services.filesystem.policy import (
     FilesystemAccessPolicy,
-    UserScopedWorkspaceFilesystemPolicy,
+    WorkspaceScopedFilesystemPolicy,
 )
 from app.services.filesystem.service import AgentFilesystemService
 from app.services.filesystem.workspace_layout import (
@@ -35,8 +35,8 @@ __all__ = [
     "FilesystemToolError",
     "FilesystemWriteRequest",
     "SessionWorkspaceLayout",
-    "UserScopedWorkspaceFilesystemPolicy",
     "UserWorkspaceLayout",
+    "WorkspaceScopedFilesystemPolicy",
     "WorkspaceLayoutService",
-    "build_filesystem_mounts",
+    "build_mounts",
 ]

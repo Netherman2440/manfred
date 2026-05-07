@@ -48,6 +48,42 @@ class AgentFilesystemService:
         self.max_file_size = max_file_size
         self.exclude_patterns = self._normalize_patterns(exclude_patterns)
 
+    def list_mounts(self) -> list:
+        return self.path_resolver.mounts
+
+    def generate_filesystem_instructions(self) -> str:
+        mount_lines = []
+        for mount in sorted(self.list_mounts(), key=lambda m: m.name):
+            if mount.name == "workspace":
+                mount_lines.append("- workspace/      — your session workspace (read/write)")
+                mount_lines.append("  - workspace/files/        — working files")
+                mount_lines.append("  - workspace/attachments/  — session attachments")
+                mount_lines.append("  - workspace/plan.md       — session plan")
+            else:
+                descriptions = {
+                    "agents": "your agent definitions",
+                    "workflows": "your workflow definitions",
+                    "skills": "your skill definitions",
+                    "shared": "shared knowledge base",
+                }
+                desc = descriptions.get(mount.name, mount.name)
+                mount_lines.append(f"- {mount.name}/      — {desc}")
+
+        mounts_block = "\n".join(mount_lines)
+        return (
+            "<filesystem>\n"
+            "Your file tools operate on a sandboxed filesystem. All paths are relative — never use a leading \"/\".\n"
+            "\n"
+            "Available mounts (use fs_read(\".\") to list them):\n"
+            f"{mounts_block}\n"
+            "\n"
+            "Rules:\n"
+            "1. Read a file before modifying it (checksum required for writes)\n"
+            "2. Use workspace/ for all session output\n"
+            "3. agents/, workflows/, skills/ contain definitions — prefer read over write\n"
+            "</filesystem>"
+        )
+
     async def read(self, request: FilesystemReadRequest) -> dict[str, Any]:
         normalized_path = self.path_resolver.normalize_virtual_path(request.path)
         if normalized_path == ".":

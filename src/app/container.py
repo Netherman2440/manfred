@@ -19,9 +19,9 @@ from app.events import EventBus
 from app.services.filesystem import (
     AgentFilesystemService,
     FilesystemPathResolver,
-    UserScopedWorkspaceFilesystemPolicy,
+    WorkspaceScopedFilesystemPolicy,
     WorkspaceLayoutService,
-    build_filesystem_mounts,
+    build_mounts,
 )
 from app.mcp import StdioMcpManager
 from app.observability import build_langfuse_subscriber
@@ -58,26 +58,23 @@ def build_db_session(session_factory: Callable[[], Session]) -> Session:
     return session_factory()
 
 
+def _resolve_fs_root(*, repo_root: Path, workspace_path: str) -> Path:
+    root = Path(workspace_path)
+    return (repo_root / root).resolve() if not root.is_absolute() else root.resolve()
+
+
 def build_filesystem_service(
     *,
     settings: Settings,
     repo_root: Path,
     workspace_layout_service: WorkspaceLayoutService,
 ) -> AgentFilesystemService:
-    mounts = build_filesystem_mounts(
-        repo_root=repo_root,
-        fs_roots=settings.filesystem_roots(),
-        workspace_path=settings.WORKSPACE_PATH,
-    )
-    path_resolver = FilesystemPathResolver(mounts, workspace_root=settings.WORKSPACE_PATH)
-    workspace_mount_names = {
-        mount.name
-        for mount in mounts
-        if mount.name == "workspaces" or mount.name.endswith("/workspaces")
-    }
-    access_policy = UserScopedWorkspaceFilesystemPolicy(
+    fs_root = _resolve_fs_root(repo_root=repo_root, workspace_path=settings.WORKSPACE_PATH)
+    mounts = build_mounts(mount_names=settings.mount_names(), fs_root=fs_root)
+    path_resolver = FilesystemPathResolver(mounts)
+    access_policy = WorkspaceScopedFilesystemPolicy(
         workspace_layout_service=workspace_layout_service,
-        workspace_mount_names=workspace_mount_names,
+        fs_root=fs_root,
     )
     return AgentFilesystemService(
         path_resolver=path_resolver,
@@ -95,6 +92,10 @@ def build_workspace_layout_service(
     return WorkspaceLayoutService(
         repo_root=repo_root,
         workspace_path=settings.WORKSPACE_PATH,
+        agent_mount_names=settings.mount_names(),
+        files_dir_name=settings.FILES_DIR_NAME,
+        attachments_dir_name=settings.ATTACHMENTS_DIR_NAME,
+        plan_file_name=settings.PLAN_FILE_NAME,
     )
 
 
@@ -146,6 +147,7 @@ def build_runner(
     event_bus: EventBus,
     agent_loader: AgentLoader,
     message_queue: SessionMessageQueue,
+    filesystem_service: AgentFilesystemService,
 ) -> Runner:
     return Runner(
         agent_repository=AgentRepository(session),
@@ -159,6 +161,7 @@ def build_runner(
         agent_loader=agent_loader,
         max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
         message_queue=message_queue,
+        filesystem_service=filesystem_service,
     )
 
 
@@ -174,6 +177,7 @@ def build_chat_service(
     active_run_registry: ActiveRunRegistry,
     workspace_layout_service: WorkspaceLayoutService,
     attachment_storage_service: ChatAttachmentStorageService,
+    filesystem_service: AgentFilesystemService,
 ) -> ChatService:
     user_repository = UserRepository(session)
     session_repository = SessionRepository(session)
@@ -203,6 +207,7 @@ def build_chat_service(
             event_bus=event_bus,
             agent_loader=agent_loader,
             message_queue=message_queue,
+            filesystem_service=filesystem_service,
         ),
         active_run_registry=active_run_registry,
         workspace_layout_service=workspace_layout_service,
@@ -294,6 +299,7 @@ class Container(containers.DeclarativeContainer):
         active_run_registry=active_run_registry,
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=chat_attachment_storage_service,
+        filesystem_service=filesystem_service,
     )
     session_query_service = providers.Factory(
         build_session_query_service,

@@ -20,6 +20,7 @@ class FilesystemSubject:
     session_id: str
     agent_id: str
     user_name: str | None = None
+    workspace_path: str | None = None
 
 
 @dataclass(slots=True, frozen=True)

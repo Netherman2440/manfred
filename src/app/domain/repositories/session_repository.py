@@ -33,6 +33,7 @@ class SessionRepository:
         model.root_agent_id = domain_session.root_agent_id
         model.status = domain_session.status.value
         model.title = domain_session.title
+        model.workspace_path = domain_session.workspace_path
         model.created_at = domain_session.created_at
         model.updated_at = domain_session.updated_at
 
@@ -48,6 +49,7 @@ class SessionRepository:
             root_agent_id=model.root_agent_id,
             status=SessionStatus(model.status),
             title=model.title,
+            workspace_path=model.workspace_path,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

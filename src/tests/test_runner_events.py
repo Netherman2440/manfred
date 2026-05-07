@@ -45,6 +45,7 @@ from app.services.agent_loader import LoadedAgent
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
+from tests.conftest import FakeFilesystemService
 
 
 class FakeProvider(Provider):
@@ -278,6 +279,7 @@ def make_runner(
             queued_input_repository=QueuedInputRepository(db_session),
             item_repository=item_repository,
         ),
+        filesystem_service=FakeFilesystemService(),
     )
     return runner, agent.id, event_types
 

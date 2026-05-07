@@ -1,7 +1,19 @@
 from app.config import Settings
 
 
-def test_filesystem_roots_prefers_fs_root_over_default_roots() -> None:
-    settings = Settings(_env_file=None, FS_ROOT="/tmp/workspace")
+def test_mount_names_returns_list_from_fs_mounts() -> None:
+    settings = Settings(_env_file=None, FS_MOUNTS="agents,skills,workflows,shared")
 
-    assert settings.filesystem_roots() == ["/tmp/workspace"]
+    assert settings.mount_names() == ["agents", "skills", "workflows", "shared"]
+
+
+def test_mount_names_strips_slashes_and_spaces() -> None:
+    settings = Settings(_env_file=None, FS_MOUNTS=" agents/, /shared ")
+
+    assert settings.mount_names() == ["agents", "shared"]
+
+
+def test_mount_names_ignores_empty_segments() -> None:
+    settings = Settings(_env_file=None, FS_MOUNTS="agents,,shared,")
+
+    assert settings.mount_names() == ["agents", "shared"]

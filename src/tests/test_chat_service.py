@@ -42,6 +42,7 @@ from app.services.filesystem import WorkspaceLayoutService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
+from tests.conftest import FakeFilesystemService
 
 
 class FakeProvider:
@@ -296,6 +297,7 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
             queued_input_repository=QueuedInputRepository(db_session),
             item_repository=item_repository,
         ),
+        filesystem_service=FakeFilesystemService(),
     )
     chat_service = ChatService(
         session=db_session,
@@ -405,18 +407,17 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
     session_root = (
         tmp_path
         / ".agent_data"
-        / "workspaces"
         / "default-user"
-        / "sessions"
+        / "workspaces"
         / session.created_at.strftime("%Y")
         / session.created_at.strftime("%m")
         / session.created_at.strftime("%d")
         / session.id
     )
-    assert (session_root / "input").is_dir()
-    assert (session_root / "output").is_dir()
-    assert (session_root / "notes.md").is_file()
-    assert (tmp_path / ".agent_data" / "workspaces" / "default-user" / "agents").is_dir()
+    assert (session_root / "files").is_dir()
+    assert (session_root / "attachments").is_dir()
+    assert (session_root / "plan.md").is_file()
+    assert session.workspace_path == str(session_root)
 
 
 def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Path) -> None:
@@ -521,6 +522,7 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
             queued_input_repository=queued_input_repository,
             item_repository=item_repository,
         ),
+        filesystem_service=FakeFilesystemService(),
     )
     chat_service = ChatService(
         session=db_session,
@@ -573,16 +575,16 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
     user_item = next(item for item in session_items if item.role == MessageRole.USER)
     assert len(user_item.attachments) == 1
     assert user_item.attachments[0].file_name == "notes.txt"
-    assert user_item.attachments[0].path == "input/notes.txt"
+    assert user_item.attachments[0].path == "workspace/attachments/notes.txt"
     assert (workspace_layout_service.ensure_session_workspace(
         user=chat_service._ensure_default_user(),
         session=session_repository.get(response.session_id),
-    ).input_dir / "notes.txt").is_file()
+    ).attachments_dir / "notes.txt").is_file()
     assert len(capturing_provider.requests) == 1
     provider_input = capturing_provider.requests[0].input
     assert [item.type for item in provider_input] == ["message", "message"]
     assert "Attached file: notes.txt" in provider_input[1].content
-    assert "path: input/notes.txt" in provider_input[1].content
+    assert "path: workspace/attachments/notes.txt" in provider_input[1].content
 
 
 @pytest.mark.asyncio
@@ -750,6 +752,7 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
             queued_input_repository=queued_input_repository,
             item_repository=item_repository,
         ),
+        filesystem_service=FakeFilesystemService(),
     )
     chat_service = ChatService(
         session=db_session,
@@ -914,4 +917,4 @@ async def test_process_queue_persists_pending_input_for_waiting_root_agent(
     pending = queued_input_repository.get_pending_for_session_agent("session-queue", "agent-queue")
     assert len(pending) == 1
     assert pending[0].message == "Nowa wiadomosc w kolejce"
-    assert pending[0].attachments[0].path == "input/queue.txt"
+    assert pending[0].attachments[0].path == "workspace/attachments/queue.txt"

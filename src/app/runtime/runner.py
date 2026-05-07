@@ -38,6 +38,7 @@ from app.events import (
     build_event_context,
 )
 from app.mcp import McpManager
+from app.services.filesystem import AgentFilesystemService
 from app.providers import (
     ProviderDoneEvent,
     ProviderErrorEvent,
@@ -95,6 +96,7 @@ class Runner:
         agent_loader: AgentLoader,
         max_delegation_depth: int,
         message_queue: SessionMessageQueue,
+        filesystem_service: AgentFilesystemService,
     ) -> None:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
@@ -107,6 +109,7 @@ class Runner:
         self.agent_loader = agent_loader
         self.max_delegation_depth = max_delegation_depth
         self.message_queue = message_queue
+        self.filesystem_service = filesystem_service
 
     async def run_agent(
         self,
@@ -909,6 +912,7 @@ class Runner:
             agent_id=context.agent.id,
             call_id=function_call.call_id,
             tool_name=function_call.name,
+            workspace_path=context.session.workspace_path,
             signal=signal,
         )
 
@@ -1575,9 +1579,11 @@ class Runner:
         ProviderRequest,
     ]:
         request_input = self.map_items_to_provider_input(context.items)
+        fs_instructions = self.filesystem_service.generate_filesystem_instructions()
+        instructions = f"{context.agent.config.task}\n\n{fs_instructions}"
         request = ProviderRequest(
             model=model,
-            instructions=context.agent.config.task,
+            instructions=instructions,
             input=request_input,
             tools=context.agent.config.tools or [],
             temperature=context.agent.config.temperature,

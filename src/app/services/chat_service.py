@@ -779,7 +779,9 @@ class ChatService:
                 updated_at=now,
             )
             saved_session = self.session_repository.save(session)
-            self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
+            layout = self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
+            saved_session.workspace_path = str(layout.root)
+            self.session_repository.save(saved_session)
             return saved_session
 
         session = self.session_repository.get(session_id)

@@ -17,6 +17,7 @@ def build_filesystem_subject(context: ToolExecutionContext) -> FilesystemSubject
         session_id=context.session_id,
         agent_id=context.agent_id,
         user_name=context.user_name,
+        workspace_path=context.workspace_path,
     )
 
 

@@ -16,18 +16,17 @@ class FilesystemAccessPolicy(Protocol):
     async def authorize(self, request: FilesystemAccessRequest) -> FilesystemAccessDecision: ...
 
 
-class UserScopedWorkspaceFilesystemPolicy:
+class WorkspaceScopedFilesystemPolicy:
     def __init__(
         self,
         *,
         workspace_layout_service: WorkspaceLayoutService,
-        workspace_mount_names: set[str] | None = None,
+        fs_root: Path,
     ) -> None:
-        self.workspace_layout_service = workspace_layout_service
-        self.workspace_mount_names = workspace_mount_names or set()
+        self._workspace_layout_service = workspace_layout_service
+        self._fs_root = fs_root.resolve()
 
     async def authorize(self, request: FilesystemAccessRequest) -> FilesystemAccessDecision:
-        resolved_target = request.target_resolved_path
         target_effective_path: Path | None = None
 
         allowed, message, effective_path = self._authorize_path(request.resolved_path, request.subject)
@@ -38,9 +37,9 @@ class UserScopedWorkspaceFilesystemPolicy:
                 error_code="filesystem_access_denied",
             )
 
-        if resolved_target is not None:
+        if request.target_resolved_path is not None:
             target_allowed, target_message, target_effective_path = self._authorize_path(
-                resolved_target,
+                request.target_resolved_path,
                 request.subject,
             )
             if not target_allowed:
@@ -61,29 +60,48 @@ class UserScopedWorkspaceFilesystemPolicy:
         resolved_path: ResolvedFilesystemPath,
         subject: FilesystemSubject,
     ) -> tuple[bool, str | None, Path]:
-        mount_root = resolved_path.mount.root.resolve()
-        if resolved_path.mount.name not in self.workspace_mount_names:
-            return True, None, resolved_path.absolute_path
+        if resolved_path.mount.name == "workspace":
+            return self._authorize_workspace_path(resolved_path, subject)
+        return self._authorize_user_scoped_path(resolved_path, subject)
 
+    def _authorize_workspace_path(
+        self,
+        resolved_path: ResolvedFilesystemPath,
+        subject: FilesystemSubject,
+    ) -> tuple[bool, str | None, Path]:
+        if subject.workspace_path is None:
+            return False, "Filesystem access to workspace/ requires a session workspace.", resolved_path.absolute_path
+
+        workspace_root = Path(subject.workspace_path).resolve()
+        relative = resolved_path.relative_path
+        effective_path = workspace_root if relative == relative.parent else workspace_root / relative
+
+        if not effective_path.is_relative_to(workspace_root):
+            return False, f"Path '{resolved_path.requested_path}' escapes the session workspace.", effective_path
+
+        return True, None, effective_path
+
+    def _authorize_user_scoped_path(
+        self,
+        resolved_path: ResolvedFilesystemPath,
+        subject: FilesystemSubject,
+    ) -> tuple[bool, str | None, Path]:
         if not subject.user_id and not subject.user_name:
-            return False, "Filesystem access to workspaces requires a user_id.", resolved_path.absolute_path
+            return False, "Filesystem access requires a user identity.", resolved_path.absolute_path
 
-        workspace_layout = self.workspace_layout_service.resolve_user_workspace(
+        user_key = self._workspace_layout_service.resolve_user_workspace_key(
             user_id=subject.user_id,
             user_name=subject.user_name,
         )
-        scoped_root = workspace_layout.root.resolve(strict=False)
-        if not scoped_root.is_relative_to(mount_root):
-            return False, "Workspace filesystem scope is misconfigured.", resolved_path.absolute_path
+        scoped_root = (self._fs_root / user_key / resolved_path.mount.name).resolve()
+        relative = resolved_path.relative_path
+        effective_path = scoped_root if relative == relative.parent else scoped_root / relative
 
-        if resolved_path.absolute_path == mount_root:
-            return True, None, scoped_root
+        if not effective_path.is_relative_to(scoped_root):
+            return (
+                False,
+                f"Path '{resolved_path.requested_path}' escapes the user directory.",
+                effective_path,
+            )
 
-        if resolved_path.absolute_path == scoped_root or resolved_path.absolute_path.is_relative_to(scoped_root):
-            return True, None, resolved_path.absolute_path
-
-        return (
-            False,
-            f"Access to '{resolved_path.requested_path}' is not allowed for the current user.",
-            resolved_path.absolute_path,
-        )
+        return True, None, effective_path

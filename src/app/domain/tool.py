@@ -34,6 +34,7 @@ class ToolExecutionContext:
     call_id: str
     tool_name: str
     user_name: str | None = None
+    workspace_path: str | None = None
     signal: CancellationSignal | None = None
 
 
