@@ -13,3 +13,4 @@ class Session:
     title: str | None
     created_at: datetime
     updated_at: datetime
+    workspace_path: str | None = None

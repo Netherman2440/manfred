@@ -48,6 +48,31 @@ class ChatRequest(BaseModel):
     agent_config: ChatAgentConfigInput | None = None
 
 
+class AttachmentSchema(BaseModel):
+    id: str
+    file_name: str
+    media_type: str
+    size_bytes: int
+    path: str
+
+
+class ChatEditRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    stream: bool = False
+    retain_attachment_ids: list[str] = Field(default_factory=list)
+
+
+class ChatQueueRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+class ChatQueueResponse(BaseModel):
+    session_id: str
+    queued_input_id: str
+    accepted_at: datetime
+    queue_position: int
+
+
 class TextOutputItem(BaseModel):
     type: Literal["text"] = "text"
     text: str

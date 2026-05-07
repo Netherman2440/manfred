@@ -18,6 +18,7 @@ from app.domain import (
     Agent,
     AgentConfig,
     AgentStatus,
+    Attachment,
     FunctionToolDefinition,
     Item,
     ItemType,
@@ -305,6 +306,68 @@ def test_get_user_session_detail_returns_transcript_items(
     assert payload["items"][2]["tool_result"] == {"ok": True, "output": {"hits": 3}}
     assert payload["items"][2]["is_error"] is False
     assert payload["items"][2]["created_at"]
+
+
+def test_get_user_session_detail_includes_message_attachments_and_edit_metadata(
+    api_client: tuple[TestClient, sessionmaker],
+) -> None:
+    client, test_session_factory = api_client
+    _seed_session_graph(
+        test_session_factory,
+        session_id="session-attachments",
+        user_id="default-user",
+    )
+    db = test_session_factory()
+    try:
+        item_repository = ItemRepository(db)
+        now = utcnow()
+        item_repository.save(
+            Item(
+                id="item-edited-user",
+                session_id="session-attachments",
+                agent_id="agent-session-attachments",
+                sequence=1,
+                type=ItemType.MESSAGE,
+                role=MessageRole.USER,
+                content="Zmieniona wiadomosc",
+                call_id=None,
+                name=None,
+                arguments_json=None,
+                output=None,
+                is_error=False,
+                created_at=now,
+                attachments=[
+                    Attachment(
+                        id="attachment-1",
+                        item_id="item-edited-user",
+                        file_name="brief.txt",
+                        media_type="text/plain",
+                        size_bytes=123,
+                        path="input/brief.txt",
+                        created_at=now,
+                    )
+                ],
+                edited_at=now,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get("/api/v1/users/default-user/sessions/session-attachments")
+
+    assert response.status_code == 200
+    item = response.json()["data"]["items"][0]
+    assert item["attachments"] == [
+        {
+            "id": "attachment-1",
+            "file_name": "brief.txt",
+            "media_type": "text/plain",
+            "size_bytes": 123,
+            "path": "input/brief.txt",
+        }
+    ]
+    assert item["edited_at"]
 
 
 def test_get_user_session_detail_returns_404_for_unknown_or_foreign_session(

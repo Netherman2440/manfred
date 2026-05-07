@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
 
-from app.db.models import ItemModel
-from app.domain.item import Item
+from app.db.models import ItemAttachmentModel, ItemModel
+from app.domain.item import Attachment, Item
 from app.domain.types import ItemType, MessageRole
 
 
@@ -14,12 +15,17 @@ class ItemRepository:
         self.session = session
 
     def get(self, item_id: str) -> Item | None:
-        model = self.session.get(ItemModel, item_id)
+        model = self.session.scalar(
+            select(ItemModel)
+            .options(selectinload(ItemModel.attachments))
+            .where(ItemModel.id == item_id)
+        )
         return None if model is None else self._to_domain(model)
 
     def list_by_session(self, session_id: str) -> list[Item]:
         models = self.session.scalars(
             select(ItemModel)
+            .options(selectinload(ItemModel.attachments))
             .where(ItemModel.session_id == session_id)
             .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
         ).all()
@@ -28,6 +34,7 @@ class ItemRepository:
     def list_by_session_chronological(self, session_id: str) -> list[Item]:
         models = self.session.scalars(
             select(ItemModel)
+            .options(selectinload(ItemModel.attachments))
             .where(ItemModel.session_id == session_id)
             .order_by(ItemModel.created_at.asc(), ItemModel.agent_id.asc(), ItemModel.sequence.asc())
         ).all()
@@ -36,6 +43,7 @@ class ItemRepository:
     def list_by_agent(self, agent_id: str) -> list[Item]:
         models = self.session.scalars(
             select(ItemModel)
+            .options(selectinload(ItemModel.attachments))
             .where(ItemModel.agent_id == agent_id)
             .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
         ).all()
@@ -44,6 +52,7 @@ class ItemRepository:
     def list_by_agent_after_sequence(self, agent_id: str, sequence: int) -> list[Item]:
         models = self.session.scalars(
             select(ItemModel)
+            .options(selectinload(ItemModel.attachments))
             .where(ItemModel.agent_id == agent_id, ItemModel.sequence > sequence)
             .order_by(ItemModel.sequence.asc(), ItemModel.created_at.asc())
         ).all()
@@ -75,11 +84,34 @@ class ItemRepository:
         model.arguments_json = item.arguments_json
         model.output = item.output
         model.is_error = item.is_error
+        model.edited_at = item.edited_at
         model.created_at = item.created_at
+        model.attachments = [
+            ItemAttachmentModel(
+                id=attachment.id,
+                item_id=item.id,
+                file_name=attachment.file_name,
+                media_type=attachment.media_type,
+                size_bytes=attachment.size_bytes,
+                path=attachment.path,
+                created_at=attachment.created_at,
+            )
+            for attachment in item.attachments
+        ]
 
         self.session.add(model)
         self.session.flush()
         return self._to_domain(model)
+
+    def delete_many(self, item_ids: list[str]) -> None:
+        if not item_ids:
+            return
+        models = self.session.scalars(
+            select(ItemModel).where(ItemModel.id.in_(item_ids))
+        ).all()
+        for model in models:
+            self.session.delete(model)
+        self.session.flush()
 
     @staticmethod
     def _to_domain(model: ItemModel) -> Item:
@@ -97,4 +129,17 @@ class ItemRepository:
             output=model.output,
             is_error=model.is_error,
             created_at=model.created_at,
+            attachments=[
+                Attachment(
+                    id=attachment.id,
+                    item_id=attachment.item_id,
+                    file_name=attachment.file_name,
+                    media_type=attachment.media_type,
+                    size_bytes=attachment.size_bytes,
+                    path=attachment.path,
+                    created_at=attachment.created_at,
+                )
+                for attachment in sorted(model.attachments, key=lambda current: (current.created_at, current.id))
+            ],
+            edited_at=model.edited_at,
         )

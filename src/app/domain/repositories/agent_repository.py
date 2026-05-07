@@ -72,6 +72,16 @@ class AgentRepository:
         self.session.flush()
         return self._to_domain(model)
 
+    def delete_many(self, agent_ids: list[str]) -> None:
+        if not agent_ids:
+            return
+        models = self.session.scalars(
+            select(AgentModel).where(AgentModel.id.in_(agent_ids))
+        ).all()
+        for model in models:
+            self.session.delete(model)
+        self.session.flush()
+
     def _to_domain(self, model: AgentModel) -> Agent:
         config_payload = model.config or {}
         return Agent(

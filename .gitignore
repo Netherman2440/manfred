@@ -5,3 +5,4 @@ __pycache__/
 *.db
 .agent_data/workspaces
 .idea/*
+.agent_data/*

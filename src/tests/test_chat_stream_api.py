@@ -3,9 +3,10 @@ import json
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.requests import Request
 
 from app.api.v1.chat.api import cancel, chat
-from app.api.v1.chat.schema import ChatRequest, ChatResponse, ChatStreamSessionEvent, MessageInputItem
+from app.api.v1.chat.schema import ChatResponse, ChatStreamSessionEvent
 from app.providers import ProviderDoneEvent, ProviderErrorEvent, ProviderTextDeltaEvent, ProviderTextDoneEvent
 from app.providers.types import ProviderResponse, ProviderTextOutputItem
 from app.services.chat_service import ChatServiceNotFoundError
@@ -16,13 +17,15 @@ class FakeChatService:
         self._events = events
         self.close_calls = 0
 
-    async def process_chat_stream(self, payload):  # noqa: ANN001
+    async def process_chat_stream(self, payload, *, attachments=None):  # noqa: ANN001
         del payload
+        del attachments
         for event in self._events:
             yield event
 
-    async def process_chat(self, payload):  # noqa: ANN001
+    async def process_chat(self, payload, *, attachments=None):  # noqa: ANN001
         del payload
+        del attachments
         raise AssertionError("Non-stream path should not be used in this test.")
 
     async def process_cancel(self, session_id, include_tool_result=False):  # noqa: ANN001
@@ -54,6 +57,27 @@ async def _read_stream_body(response: StreamingResponse) -> str:
     return "".join(chunks)
 
 
+def _build_json_request(payload: dict[str, object]) -> Request:
+    body = json.dumps(payload).encode("utf-8")
+
+    async def receive() -> dict[str, object]:
+        return {
+            "type": "http.request",
+            "body": body,
+            "more_body": False,
+        }
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/chat/completions",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        receive=receive,
+    )
+
+
 @pytest.mark.asyncio
 async def test_chat_stream_returns_sse_payloads() -> None:
     chat_service = FakeChatService(
@@ -68,9 +92,11 @@ async def test_chat_stream_returns_sse_payloads() -> None:
     )
 
     response = await chat(
-        ChatRequest(
-            input=[MessageInputItem(role="user", content="Hi")],
-            stream=True,
+        _build_json_request(
+            {
+                "input": [{"type": "message", "role": "user", "content": "Hi"}],
+                "stream": True,
+            }
         ),
         chat_service=chat_service,
     )
@@ -113,9 +139,11 @@ async def test_chat_stream_returns_error_event_payload() -> None:
     chat_service = FakeChatService([ProviderErrorEvent(error="setup failed")])
 
     response = await chat(
-        ChatRequest(
-            input=[MessageInputItem(role="user", content="Hi")],
-            stream=True,
+        _build_json_request(
+            {
+                "input": [{"type": "message", "role": "user", "content": "Hi"}],
+                "stream": True,
+            }
         ),
         chat_service=chat_service,
     )

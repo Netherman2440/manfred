@@ -19,15 +19,14 @@ class Settings(BaseSettings):
     API_CORS_ALLOW_LOCALHOST: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
 
-    DEFAULT_AGENT: str = ".agent_data/agents/manfred.agent.md"
+    DEFAULT_AGENT: str = "default_agents/manfred.agent.md"
     WORKSPACE_PATH: str = ".agent_data"
-    FS_ROOT: str = ""
-    FS_ROOTS: str = (
-        ".agent_data/agents, .agent_data/shared, .agent_data/skills, "
-        ".agent_data/workflows, .agent_data/workspaces"
-    )
+    FS_MOUNTS: str = "agents,skills,workflows,shared"
     FS_EXCLUDE: str = ""
     MAX_FILE_SIZE: int = 524288
+    FILES_DIR_NAME: str = "files"
+    ATTACHMENTS_DIR_NAME: str = "attachments"
+    PLAN_FILE_NAME: str = "plan.md"
     MCP_CONFIG_PATH: str = ".mcp.json"
     MCP_TOOL_TIMEOUT_MS: int = 30000
     MAX_DELEGATION_DEPTH: int = 8
@@ -52,13 +51,8 @@ class Settings(BaseSettings):
     AI_DEVS_API_KEY: str = ""
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
 
-    def filesystem_roots(self) -> list[str]:
-        if self.FS_ROOT.strip():
-            return [self.FS_ROOT.strip()]
-        roots = [item.strip() for item in self.FS_ROOTS.split(",") if item.strip()]
-        if roots:
-            return roots
-        return []
+    def mount_names(self) -> list[str]:
+        return [name.strip().strip("/") for name in self.FS_MOUNTS.split(",") if name.strip()]
 
     def filesystem_exclude_patterns(self) -> list[str]:
         return [item.strip() for item in self.FS_EXCLUDE.split(",") if item.strip()]

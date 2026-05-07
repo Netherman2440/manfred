@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,9 @@ from app.api.v1.chat.schema import (
     ChatAgentConfigInput,
     ChatRequest,
     ChatResponse,
+    ChatEditRequest,
+    ChatQueueRequest,
+    ChatQueueResponse,
     ChatStreamSessionEvent,
     DeliverRequest,
     FunctionCallOutputItem,
@@ -28,10 +32,13 @@ from app.domain import (
     Agent,
     AgentConfig,
     AgentStatus,
+    Attachment,
     FunctionToolDefinition,
     Item,
     ItemType,
     MessageRole,
+    QueuedInput,
+    QueuedInputAttachment,
     Session,
     SessionStatus,
     ToolDefinition,
@@ -39,11 +46,19 @@ from app.domain import (
     WaitingForEntry,
     WebSearchToolDefinition,
 )
-from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
+from app.domain.repositories import (
+    AgentRepository,
+    ItemRepository,
+    QueuedInputRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, CancellationSignal
+from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
+from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment, StoredAttachment
 from app.services.filesystem import WorkspaceLayoutService
 from app.providers import ProviderErrorEvent, ProviderStreamEvent
 
@@ -91,9 +106,12 @@ class ChatService:
         session_repository: SessionRepository,
         agent_repository: AgentRepository,
         item_repository: ItemRepository,
+        queued_input_repository: QueuedInputRepository,
         runner: Runner,
         active_run_registry: ActiveRunRegistry,
         workspace_layout_service: WorkspaceLayoutService,
+        attachment_storage_service: ChatAttachmentStorageService,
+        message_queue: SessionMessageQueue,
     ) -> None:
         self.session = session
         self.settings = settings
@@ -102,15 +120,24 @@ class ChatService:
         self.session_repository = session_repository
         self.agent_repository = agent_repository
         self.item_repository = item_repository
+        self.queued_input_repository = queued_input_repository
         self.runner = runner
         self.active_run_registry = active_run_registry
         self.workspace_layout_service = workspace_layout_service
+        self.attachment_storage_service = attachment_storage_service
+        self.message_queue = message_queue
 
-    async def process_chat(self, chat_request: ChatRequest) -> ChatResponse:
+    async def process_chat(
+        self,
+        chat_request: ChatRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> ChatResponse:
         active_run: ActiveRunHandle | None = None
         run_result: RunResult | None = None
+        created_files: list[Path] = []
         try:
-            setup = await self.prepare_chat(chat_request)
+            setup, created_files = await self.prepare_chat(chat_request, attachments=attachments)
             if not setup.ok or setup.value is None:
                 raise ChatServiceValidationError(setup.error or "Chat setup failed.")
 
@@ -130,14 +157,17 @@ class ChatService:
             return response
         except ChatServiceValidationError:
             self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
             raise
         except asyncio.CancelledError:
             self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
             self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
                 run_result = self._build_failed_run_result(
                     active_run.agent_id,
@@ -154,12 +184,16 @@ class ChatService:
     async def process_chat_stream(
         self,
         chat_request: ChatRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
     ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent]:
         active_run: ActiveRunHandle | None = None
         run_result: RunResult | None = None
+        created_files: list[Path] = []
         try:
-            setup = await self.prepare_chat(chat_request)
+            setup, created_files = await self.prepare_chat(chat_request, attachments=attachments)
             if not setup.ok or setup.value is None:
+                self.attachment_storage_service.cleanup_files(created_files)
                 yield ProviderErrorEvent(error=setup.error or "Chat setup failed.")
                 return
 
@@ -177,11 +211,13 @@ class ChatService:
                 run_result = self.runner.build_run_result_from_agent(agent)
         except asyncio.CancelledError:
             self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
             self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
                 run_result = self._build_failed_run_result(
                     active_run.agent_id,
@@ -194,6 +230,136 @@ class ChatService:
                     active_run.agent_id,
                     run_result or self._build_failed_run_result(active_run.agent_id, "Chat streaming failed."),
                 )
+
+    async def process_edit(
+        self,
+        session_id: str,
+        item_id: str,
+        edit_request: ChatEditRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+        include_tool_result: bool = False,
+    ) -> ChatResponse:
+        active_run: ActiveRunHandle | None = None
+        run_result: RunResult | None = None
+        created_files: list[Path] = []
+        try:
+            response, created_files, active_run = await self._process_edit_internal(
+                session_id,
+                item_id,
+                edit_request,
+                attachments=attachments,
+                include_tool_result=include_tool_result,
+            )
+            self.session.commit()
+            agent = self.agent_repository.get(response.agent_id)
+            if agent is not None:
+                run_result = self.runner.build_run_result_from_agent(agent)
+            return response
+        except ChatServiceValidationError:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            raise
+        except asyncio.CancelledError:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            if active_run is not None:
+                run_result = self._build_cancelled_run_result(active_run.agent_id)
+            raise
+        except Exception as exc:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            if active_run is not None:
+                run_result = self._build_failed_run_result(
+                    active_run.agent_id,
+                    str(exc) or "Chat edit failed.",
+                )
+            raise
+        finally:
+            if active_run is not None:
+                await self.active_run_registry.finish(
+                    active_run.agent_id,
+                    run_result or self._build_failed_run_result(active_run.agent_id, "Chat edit failed."),
+                )
+
+    async def process_edit_stream(
+        self,
+        session_id: str,
+        item_id: str,
+        edit_request: ChatEditRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent]:
+        active_run: ActiveRunHandle | None = None
+        run_result: RunResult | None = None
+        created_files: list[Path] = []
+        try:
+            setup, created_files, active_run = await self._prepare_edit_setup(
+                session_id,
+                item_id,
+                edit_request,
+                attachments=attachments,
+            )
+            yield ChatStreamSessionEvent(
+                session_id=setup.session.id,
+                agent_id=setup.agent.id,
+            )
+            async for event in self.stream_prepared_chat(setup, signal=active_run.signal):
+                yield event
+            self.session.commit()
+            agent = self.agent_repository.get(setup.agent.id)
+            if agent is not None:
+                run_result = self.runner.build_run_result_from_agent(agent)
+        except ChatServiceValidationError as exc:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            yield ProviderErrorEvent(error=str(exc))
+        except asyncio.CancelledError:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            if active_run is not None:
+                run_result = self._build_cancelled_run_result(active_run.agent_id)
+            raise
+        except Exception as exc:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            if active_run is not None:
+                run_result = self._build_failed_run_result(
+                    active_run.agent_id,
+                    str(exc) or "Chat edit failed.",
+                )
+            yield ProviderErrorEvent(error=str(exc) or "Chat edit failed.")
+        finally:
+            if active_run is not None:
+                await self.active_run_registry.finish(
+                    active_run.agent_id,
+                    run_result or self._build_failed_run_result(active_run.agent_id, "Chat edit failed."),
+                )
+
+    async def process_queue(
+        self,
+        session_id: str,
+        queue_request: ChatQueueRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> ChatQueueResponse:
+        created_files: list[Path] = []
+        try:
+            response, created_files = self._queue_session_input(
+                session_id,
+                queue_request,
+                attachments=attachments,
+            )
+            self.session.commit()
+            return response
+        except ChatServiceValidationError:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            raise
+        except Exception:
+            self.session.rollback()
+            self.attachment_storage_service.cleanup_files(created_files)
+            raise
 
     async def process_delivery(
         self,
@@ -237,18 +403,36 @@ class ChatService:
             self.session.rollback()
             raise
 
-    async def prepare_chat(self, chat_request: ChatRequest) -> PreparedChatSetupResult:
+    async def prepare_chat(
+        self,
+        chat_request: ChatRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> tuple[PreparedChatSetupResult, list[Path]]:
+        created_files: list[Path] = []
         try:
             user = self._ensure_default_user() #TODO: Get real user
             session = self._load_session(chat_request.session_id, user)
+            self._validate_session_accepts_new_run(session)
             resolved_config = self._resolve_agent_config(chat_request.agent_config)
             trace_id = uuid4().hex
             agent = self._resolve_session_root_agent(session, resolved_config, trace_id=trace_id)
             last_sequence = self.item_repository.get_last_sequence(agent.id)
             existing_session_item_ids = {item.id for item in self.item_repository.list_by_session(session.id)}
-            self._store_input_items(chat_request, session, agent, last_sequence)
+            stored_attachments, created_files = self._store_request_attachments(
+                user=user,
+                session=session,
+                attachments=attachments or [],
+            )
+            self._store_input_items(
+                chat_request,
+                session,
+                agent,
+                last_sequence,
+                attachments=stored_attachments,
+            )
         except ChatServiceValidationError as exc:
-            return PreparedChatSetupResult(ok=False, error=str(exc))
+            return PreparedChatSetupResult(ok=False, error=str(exc)), created_files
 
         return PreparedChatSetupResult(
             ok=True,
@@ -258,7 +442,151 @@ class ChatService:
                 last_sequence=last_sequence,
                 existing_session_item_ids=existing_session_item_ids,
             ),
+        ), created_files
+
+    def _validate_session_accepts_new_run(self, session: Session) -> None:
+        if session.root_agent_id is None:
+            return
+        root_agent = self.agent_repository.get(session.root_agent_id)
+        if root_agent is None:
+            return
+        if root_agent.status in {AgentStatus.RUNNING, AgentStatus.WAITING}:
+            raise ChatServiceValidationError(
+                "Session already has an active or waiting run. Use the queue endpoint instead."
+            )
+
+    async def _process_edit_internal(
+        self,
+        session_id: str,
+        item_id: str,
+        edit_request: ChatEditRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+        include_tool_result: bool,
+    ) -> tuple[ChatResponse, list[Path], ActiveRunHandle]:
+        setup, created_files, active_run = await self._prepare_edit_setup(
+            session_id,
+            item_id,
+            edit_request,
+            attachments=attachments,
         )
+        response = await self.execute_chat(
+            setup.agent.id,
+            setup.last_sequence,
+            existing_session_item_ids=setup.existing_session_item_ids,
+            include_tool_result=include_tool_result,
+            signal=active_run.signal,
+        )
+        return response, created_files, active_run
+
+    async def _prepare_edit_setup(
+        self,
+        session_id: str,
+        item_id: str,
+        edit_request: ChatEditRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> tuple[PreparedChatSetup, list[Path], ActiveRunHandle]:
+        user = self._ensure_default_user()
+        session = self._ensure_session_owner(session_id, action="edit")
+        root_agent_id = session.root_agent_id
+        if not root_agent_id:
+            raise ChatServiceNotFoundError(f"Root agent not found for session: {session_id}")
+
+        existing_item = self.item_repository.get(item_id)
+        if existing_item is None or existing_item.session_id != session.id:
+            raise ChatServiceNotFoundError(f"Item not found in session: {item_id}")
+        if existing_item.type != ItemType.MESSAGE or existing_item.role != MessageRole.USER:
+            raise ChatServiceValidationError("Only user message items can be edited.")
+        if existing_item.agent_id != root_agent_id:
+            raise ChatServiceValidationError("Only root transcript user messages can be edited.")
+
+        if self.active_run_registry.is_active(root_agent_id):
+            raise ChatServiceValidationError("Cannot edit while the root run is active.")
+
+        stored_attachments, created_files = self._store_request_attachments(
+            user=user,
+            session=session,
+            attachments=attachments or [],
+        )
+        updated_attachments = self._merge_retained_attachments(
+            existing_item=existing_item,
+            retain_attachment_ids=edit_request.retain_attachment_ids,
+            new_attachments=stored_attachments,
+            new_item_id=existing_item.id,
+        )
+        updated_item = Item(
+            id=existing_item.id,
+            session_id=existing_item.session_id,
+            agent_id=existing_item.agent_id,
+            sequence=existing_item.sequence,
+            type=existing_item.type,
+            role=existing_item.role,
+            content=edit_request.message,
+            call_id=existing_item.call_id,
+            name=existing_item.name,
+            arguments_json=existing_item.arguments_json,
+            output=existing_item.output,
+            is_error=existing_item.is_error,
+            created_at=existing_item.created_at,
+            attachments=updated_attachments,
+            edited_at=utcnow(),
+        )
+        self.item_repository.save(updated_item)
+
+        rewound_setup = self._rewind_session_from_item(session, root_agent_id=root_agent_id, item_id=item_id)
+        active_run = await self.active_run_registry.start(root_agent_id)
+        return rewound_setup, created_files, active_run
+
+    def _queue_session_input(
+        self,
+        session_id: str,
+        queue_request: ChatQueueRequest,
+        *,
+        attachments: list[IncomingAttachment] | None = None,
+    ) -> tuple[ChatQueueResponse, list[Path]]:
+        user = self._ensure_default_user()
+        session = self._ensure_session_owner(session_id, action="queue")
+        root_agent_id = session.root_agent_id
+        if not root_agent_id:
+            raise ChatServiceNotFoundError(f"Root agent not found for session: {session_id}")
+
+        root_agent = self.agent_repository.get(root_agent_id)
+        if root_agent is None:
+            raise ChatServiceNotFoundError(f"Agent not found: {root_agent_id}")
+        if root_agent.status not in {AgentStatus.RUNNING, AgentStatus.WAITING}:
+            raise ChatServiceValidationError("Queue accepts input only for running or waiting sessions.")
+
+        stored_attachments, created_files = self._store_request_attachments(
+            user=user,
+            session=session,
+            attachments=attachments or [],
+        )
+        queued_input = self.queued_input_repository.save(
+            QueuedInput(
+                id=uuid4().hex,
+                session_id=session.id,
+                agent_id=root_agent.id,
+                message=queue_request.message,
+                attachments=[
+                    QueuedInputAttachment(
+                        file_name=attachment.file_name,
+                        media_type=attachment.media_type,
+                        size_bytes=attachment.size_bytes,
+                        path=attachment.path,
+                    )
+                    for attachment in stored_attachments
+                ],
+                accepted_at=utcnow(),
+            )
+        )
+        queue_position = self.message_queue.pending_count(session.id, root_agent.id)
+        return ChatQueueResponse(
+            session_id=session.id,
+            queued_input_id=queued_input.id,
+            accepted_at=queued_input.accepted_at or utcnow(),
+            queue_position=queue_position,
+        ), created_files
 
     async def stream_prepared_chat(
         self,
@@ -313,7 +641,7 @@ class ChatService:
         *,
         include_tool_result: bool = False,
     ) -> ChatResponse:
-        session = self._ensure_session_owner(session_id)
+        session = self._ensure_session_owner(session_id, action="cancel")
         agent_id = session.root_agent_id
         if not agent_id:
             raise ChatServiceNotFoundError(f"Root agent not found for session: {session_id}")
@@ -411,14 +739,14 @@ class ChatService:
         if session.user_id != current_user.id:
             raise PermissionError(f"User {current_user.id} cannot deliver results to agent {agent_id}")
 
-    def _ensure_session_owner(self, session_id: str) -> Session:
+    def _ensure_session_owner(self, session_id: str, *, action: str = "access") -> Session:
         current_user = self._ensure_default_user()
         session = self.session_repository.get(session_id)
         if session is None:
             raise ChatServiceNotFoundError(f"Session not found: {session_id}")
 
         if session.user_id != current_user.id:
-            raise PermissionError(f"User {current_user.id} cannot cancel session {session_id}")
+            raise PermissionError(f"User {current_user.id} cannot {action} session {session_id}")
 
         return session
 
@@ -452,7 +780,9 @@ class ChatService:
                 updated_at=now,
             )
             saved_session = self.session_repository.save(session)
-            self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
+            layout = self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
+            saved_session.workspace_path = str(layout.root)
+            self.session_repository.save(saved_session)
             return saved_session
 
         session = self.session_repository.get(session_id)
@@ -555,15 +885,26 @@ class ChatService:
         session: Session,
         agent: Agent,
         last_sequence: int,
+        *,
+        attachments: list[StoredAttachment],
     ) -> None:
+        user_message_count = sum(
+            1
+            for input_item in chat_request.input
+            if input_item.type == "message" and input_item.role == MessageRole.USER.value
+        )
+        if attachments and user_message_count != 1:
+            raise ChatServiceValidationError("Attachments require exactly one user message in the request.")
+
         sequence = last_sequence
         for input_item in chat_request.input:
             if input_item.type != "message":
                 continue
 
             sequence += 1
+            item_id = uuid4().hex
             item = Item(
-                id=uuid4().hex,
+                id=item_id,
                 session_id=session.id,
                 agent_id=agent.id,
                 sequence=sequence,
@@ -576,8 +917,113 @@ class ChatService:
                 output=None,
                 is_error=False,
                 created_at=utcnow(),
+                attachments=self._build_item_attachments(item_id=item_id, stored_attachments=attachments)
+                if attachments and input_item.role == MessageRole.USER.value
+                else [],
             )
             self.item_repository.save(item)
+
+    def _store_request_attachments(
+        self,
+        *,
+        user: User,
+        session: Session,
+        attachments: list[IncomingAttachment],
+    ) -> tuple[list[StoredAttachment], list[Path]]:
+        return self.attachment_storage_service.store(
+            user=user,
+            session=session,
+            attachments=attachments,
+        )
+
+    def _merge_retained_attachments(
+        self,
+        *,
+        existing_item: Item,
+        retain_attachment_ids: list[str],
+        new_attachments: list[StoredAttachment],
+        new_item_id: str,
+    ) -> list[Attachment]:
+        retain_set = set(retain_attachment_ids)
+        retained = [attachment for attachment in existing_item.attachments if attachment.id in retain_set]
+        missing = retain_set.difference({attachment.id for attachment in existing_item.attachments})
+        if missing:
+            raise ChatServiceValidationError("retain_attachment_ids contains unknown attachment ids.")
+
+        return [
+            *retained,
+            *self._build_item_attachments(item_id=new_item_id, stored_attachments=new_attachments),
+        ]
+
+    def _build_item_attachments(
+        self,
+        *,
+        item_id: str,
+        stored_attachments: list[StoredAttachment],
+    ) -> list[Attachment]:
+        return [
+            Attachment(
+                id=uuid4().hex,
+                item_id=item_id,
+                file_name=attachment.file_name,
+                media_type=attachment.media_type,
+                size_bytes=attachment.size_bytes,
+                path=attachment.path,
+                created_at=utcnow(),
+            )
+            for attachment in stored_attachments
+        ]
+
+    def _rewind_session_from_item(
+        self,
+        session: Session,
+        *,
+        root_agent_id: str,
+        item_id: str,
+    ) -> PreparedChatSetup:
+        chronological_items = self.item_repository.list_by_session_chronological(session.id)
+        rewind_index = next((index for index, item in enumerate(chronological_items) if item.id == item_id), None)
+        if rewind_index is None:
+            raise ChatServiceNotFoundError(f"Item not found in session: {item_id}")
+
+        kept_items = chronological_items[: rewind_index + 1]
+        removed_items = chronological_items[rewind_index + 1 :]
+        self.item_repository.delete_many([item.id for item in removed_items])
+        self.message_queue.clear_pending(session.id, root_agent_id)
+
+        kept_agent_ids = {root_agent_id, *(item.agent_id for item in kept_items)}
+        removable_agent_ids: list[str] = []
+        for agent in self.agent_repository.list_by_session(session.id):
+            if agent.id == root_agent_id:
+                agent.status = AgentStatus.PENDING
+                agent.waiting_for = []
+                agent.updated_at = utcnow()
+                self.agent_repository.save(agent)
+                continue
+            if agent.id not in kept_agent_ids:
+                removable_agent_ids.append(agent.id)
+                continue
+            if agent.status == AgentStatus.WAITING:
+                agent.waiting_for = []
+                agent.status = AgentStatus.COMPLETED
+                agent.updated_at = utcnow()
+                self.agent_repository.save(agent)
+
+        self.agent_repository.delete_many(removable_agent_ids)
+
+        root_agent = self.agent_repository.get(root_agent_id)
+        if root_agent is None:
+            raise ChatServiceNotFoundError(f"Agent not found: {root_agent_id}")
+        anchor_item = self.item_repository.get(item_id)
+        if anchor_item is None:
+            raise ChatServiceNotFoundError(f"Item not found in session: {item_id}")
+
+        return PreparedChatSetup(
+            session=session,
+            agent=root_agent,
+            last_sequence=anchor_item.sequence,
+            existing_session_item_ids={item.id for item in kept_items},
+        )
 
     @staticmethod
     def _build_response_output(

@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base, utcnow
-from app.db.models import AgentModel, ItemModel, SessionModel, UserModel
+from app.db.models import AgentModel, ItemAttachmentModel, ItemModel, QueuedInputModel, SessionModel, UserModel
 from app.domain import (
     Agent,
     AgentConfig,
@@ -21,7 +21,7 @@ from app.domain import (
     ToolExecutionContext,
     User,
 )
-from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository, UserRepository
+from app.domain.repositories import AgentRepository, ItemRepository, QueuedInputRepository, SessionRepository, UserRepository
 from app.events import EventBus
 from app.mcp import McpToolInfo
 from app.providers import (
@@ -39,11 +39,13 @@ from app.providers import (
     ProviderUsage,
 )
 from app.runtime.cancellation import CancellationSignal
+from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
+from tests.conftest import FakeFilesystemService
 
 
 class FakeProvider(Provider):
@@ -168,6 +170,8 @@ def db_session() -> Session:
             SessionModel.__table__,
             AgentModel.__table__,
             ItemModel.__table__,
+            ItemAttachmentModel.__table__,
+            QueuedInputModel.__table__,
         ],
     )
     session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
@@ -271,6 +275,11 @@ def make_runner(
         event_bus=event_bus,
         agent_loader=agent_loader or FakeAgentLoader(),
         max_delegation_depth=8,
+        message_queue=SessionMessageQueue(
+            queued_input_repository=QueuedInputRepository(db_session),
+            item_repository=item_repository,
+        ),
+        filesystem_service=FakeFilesystemService(),
     )
     return runner, agent.id, event_types
 
@@ -595,6 +604,44 @@ async def test_runner_marks_stream_run_as_cancelled(db_session: Session) -> None
         "agent.started",
         "turn.started",
         "agent.cancelled",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_persists_partial_stream_text_when_stream_ends_without_final_response(
+    db_session: Session,
+) -> None:
+    runner, agent_id, event_types = make_runner(
+        db_session,
+        provider_responses=[],
+        provider_streams=[
+            [
+                ProviderTextDeltaEvent(delta="Pierwsza linia. "),
+                ProviderTextDeltaEvent(delta="Druga linia."),
+            ]
+        ],
+        tools=[],
+    )
+    streamed_event_types: list[str] = []
+
+    async for event in runner.run_agent_stream(
+        agent_id,
+        last_agent_sequence=0,
+    ):
+        streamed_event_types.append(event.type)
+
+    agent = AgentRepository(db_session).get(agent_id)
+    stored_items = ItemRepository(db_session).list_by_agent(agent_id)
+
+    assert streamed_event_types == ["text_delta", "text_delta", "error"]
+    assert agent is not None
+    assert agent.status == AgentStatus.FAILED
+    assert [item.type.value for item in stored_items] == ["message", "message"]
+    assert stored_items[-1].content == "Pierwsza linia. Druga linia."
+    assert event_types == [
+        "agent.started",
+        "turn.started",
+        "agent.failed",
     ]
 
 

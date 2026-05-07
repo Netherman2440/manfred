@@ -12,6 +12,7 @@ from app.domain import (
     Agent,
     AgentConfig,
     AgentStatus,
+    Attachment,
     Item,
     ItemType,
     MessageRole,
@@ -37,6 +38,7 @@ from app.events import (
     build_event_context,
 )
 from app.mcp import McpManager
+from app.services.filesystem import AgentFilesystemService
 from app.providers import (
     ProviderDoneEvent,
     ProviderErrorEvent,
@@ -54,6 +56,7 @@ from app.providers import (
     ProviderUsage,
 )
 from app.runtime.cancellation import CancellationRequestedError, CancellationSignal
+from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.tools.registry import ToolRegistry
@@ -92,6 +95,8 @@ class Runner:
         event_bus: EventBus,
         agent_loader: AgentLoader,
         max_delegation_depth: int,
+        message_queue: SessionMessageQueue,
+        filesystem_service: AgentFilesystemService,
     ) -> None:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
@@ -103,6 +108,8 @@ class Runner:
         self.event_bus = event_bus
         self.agent_loader = agent_loader
         self.max_delegation_depth = max_delegation_depth
+        self.message_queue = message_queue
+        self.filesystem_service = filesystem_service
 
     async def run_agent(
         self,
@@ -296,6 +303,7 @@ class Runner:
                     error=f"Unknown provider or model reference: {context.agent.config.model}",
                 )
             else:
+                self._consume_pending_queue_inputs(context)
                 _request_input, request = self._build_provider_request(
                     context,
                     model=resolved.model,
@@ -305,7 +313,19 @@ class Runner:
                 generation_timer_started_at = perf_counter()
                 response: ProviderResponse | None = None
                 partial_text_chunks: list[str] = []
+                partial_text_stored = False
                 turn_result = None
+
+                def store_partial_text_once() -> None:
+                    nonlocal partial_text_stored
+                    if partial_text_stored or response is not None:
+                        return
+                    self._store_partial_stream_text(
+                        context.agent,
+                        context.session,
+                        "".join(partial_text_chunks),
+                    )
+                    partial_text_stored = True
 
                 try:
                     async for event in resolved.provider.stream(request):
@@ -318,6 +338,7 @@ class Runner:
                         if isinstance(event, ProviderDoneEvent):
                             response = event.response
                         elif isinstance(event, ProviderErrorEvent):
+                            store_partial_text_once()
                             turn_result = TurnResult(
                                 status="failed",
                                 agent=context.agent,
@@ -327,16 +348,13 @@ class Runner:
                             break
                         yield event
                 except CancellationRequestedError:
-                    self._store_partial_stream_text(
-                        context.agent,
-                        context.session,
-                        "".join(partial_text_chunks),
-                    )
+                    store_partial_text_once()
                     turn_result = TurnResult(
                         status="cancelled",
                         agent=context.agent,
                     )
                 except Exception as exc:
+                    store_partial_text_once()
                     turn_result = TurnResult(
                         status="failed",
                         agent=context.agent,
@@ -345,6 +363,7 @@ class Runner:
 
                 if turn_result is None:
                     if response is None:
+                        store_partial_text_once()
                         turn_result = TurnResult(
                             status="failed",
                             agent=context.agent,
@@ -427,6 +446,7 @@ class Runner:
         *,
         signal: CancellationSignal,
     ) -> TurnResult:
+        self._consume_pending_queue_inputs(context)
         resolved = self.provider_registry.resolve(context.agent.config.model)
         if resolved is None:
             return TurnResult(
@@ -484,6 +504,9 @@ class Runner:
         ]
 
         if not function_calls:  # TODO: support reasoning items when provider exposes them
+            if self._consume_pending_queue_inputs(context):
+                context.agent.waiting_for = []
+                return TurnResult(status="continue", agent=context.agent, usage=response.usage)
             context.agent.waiting_for = []
             context.agent.status = AgentStatus.COMPLETED
             return TurnResult(status="completed", agent=context.agent, usage=response.usage)
@@ -718,6 +741,7 @@ class Runner:
             return TurnResult(status="waiting", agent=context.agent, usage=response.usage)
 
         context.agent.waiting_for = []
+        self._consume_pending_queue_inputs(context)
         return TurnResult(status="continue", agent=context.agent, usage=response.usage)
 
     async def _handle_agent_function_call(
@@ -888,6 +912,7 @@ class Runner:
             agent_id=context.agent.id,
             call_id=function_call.call_id,
             tool_name=function_call.name,
+            workspace_path=context.session.workspace_path,
             signal=signal,
         )
 
@@ -1119,6 +1144,8 @@ class Runner:
                         content=item.content,
                     )
                 )
+                if item.role == MessageRole.USER:
+                    provider_input.extend(Runner._build_attachment_provider_inputs(item.attachments))
                 continue
 
             if item.type == ItemType.FUNCTION_CALL:
@@ -1142,6 +1169,62 @@ class Runner:
                 )
 
         return provider_input
+
+    def _consume_pending_queue_inputs(self, context: AgentRunContext) -> bool:
+        if context.agent.id != context.agent.root_agent_id or context.agent.status == AgentStatus.WAITING:
+            return False
+
+        materialized = self.message_queue.consume_into_items(
+            agent=context.agent,
+            item_factory=lambda queued_input: self._build_materialized_queued_item(context, queued_input),
+        )
+        if not materialized:
+            return False
+
+        context.items.extend(materialized)
+        return True
+
+    def _build_materialized_queued_item(self, context: AgentRunContext, queued_input) -> Item:  # noqa: ANN001
+        sequence = self.item_repository.get_last_sequence(context.agent.id) + 1
+        item_id = uuid4().hex
+        created_at = queued_input.accepted_at or utcnow()
+        return Item(
+            id=item_id,
+            session_id=context.session.id,
+            agent_id=context.agent.id,
+            sequence=sequence,
+            type=ItemType.MESSAGE,
+            role=MessageRole.USER,
+            content=queued_input.message,
+            call_id=None,
+            name=None,
+            arguments_json=None,
+            output=None,
+            is_error=False,
+            created_at=created_at,
+            attachments=[
+                Attachment(
+                    id=uuid4().hex,
+                    item_id=item_id,
+                    file_name=attachment.file_name,
+                    media_type=attachment.media_type,
+                    size_bytes=attachment.size_bytes,
+                    path=attachment.path,
+                    created_at=created_at,
+                )
+                for attachment in queued_input.attachments
+            ],
+        )
+
+    @staticmethod
+    def _build_attachment_provider_inputs(attachments: list[Attachment]) -> list[ProviderMessageInputItem]:
+        if not attachments:
+            return []
+        content = "\n\n".join(
+            f"Attached file: {a.file_name}\nmedia_type: {a.media_type}\nsize_bytes: {a.size_bytes}\npath: {a.path}"
+            for a in attachments
+        )
+        return [ProviderMessageInputItem(role=MessageRole.USER.value, content=content)]
 
     def store_provider_output(
         self,
@@ -1491,9 +1574,12 @@ class Runner:
         ProviderRequest,
     ]:
         request_input = self.map_items_to_provider_input(context.items)
+        fs_instructions = self.filesystem_service.generate_filesystem_instructions()
+        task = (context.agent.config.task or "").strip()
+        instructions = f"{task}\n\n{fs_instructions}" if task else fs_instructions
         request = ProviderRequest(
             model=model,
-            instructions=context.agent.config.task,
+            instructions=instructions,
             input=request_input,
             tools=context.agent.config.tools or [],
             temperature=context.agent.config.temperature,

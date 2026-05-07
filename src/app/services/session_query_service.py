@@ -143,6 +143,17 @@ class SessionQueryService:
                 "type": item.type.value,
                 "role": item.role.value if item.role is not None else MessageRole.ASSISTANT.value,
                 "content": item.content or "",
+                "attachments": [
+                    {
+                        "id": attachment.id,
+                        "file_name": attachment.file_name,
+                        "media_type": attachment.media_type,
+                        "size_bytes": attachment.size_bytes,
+                        "path": attachment.path,
+                    }
+                    for attachment in item.attachments
+                ],
+                "edited_at": item.edited_at,
             }
 
         if item.type == ItemType.FUNCTION_CALL:

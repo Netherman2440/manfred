@@ -14,18 +14,17 @@ _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9._-]+")
 @dataclass(slots=True, frozen=True)
 class UserWorkspaceLayout:
     workspace_key: str
-    root: Path
-    sessions_root: Path
-    agents_root: Path
+    root: Path            # fs_root / user_key
+    workspaces_root: Path # fs_root / user_key / workspaces
 
 
 @dataclass(slots=True, frozen=True)
 class SessionWorkspaceLayout:
     user_workspace: UserWorkspaceLayout
-    root: Path
-    input_dir: Path
-    output_dir: Path
-    notes_file: Path
+    root: Path            # workspaces_root / date / session_id
+    files_dir: Path       # root / files
+    attachments_dir: Path # root / attachments
+    plan_file: Path       # root / plan.md
 
 
 class WorkspaceLayoutService:
@@ -34,25 +33,21 @@ class WorkspaceLayoutService:
         *,
         repo_root: Path,
         workspace_path: str,
-        workspaces_dir_name: str = "workspaces",
-        sessions_dir_name: str = "sessions",
-        agents_dir_name: str = "agents",
-        input_dir_name: str = "input",
-        output_dir_name: str = "output",
-        notes_file_name: str = "notes.md",
+        agent_mount_names: list[str] | None = None,
+        files_dir_name: str = "files",
+        attachments_dir_name: str = "attachments",
+        plan_file_name: str = "plan.md",
     ) -> None:
-        workspace_root = Path(workspace_path)
-        self.workspace_root = (
-            (repo_root / workspace_root).resolve()
-            if not workspace_root.is_absolute()
-            else workspace_root.resolve()
+        fs_root = Path(workspace_path)
+        self.fs_root = (
+            (repo_root / fs_root).resolve()
+            if not fs_root.is_absolute()
+            else fs_root.resolve()
         )
-        self.workspaces_root = self.workspace_root / workspaces_dir_name
-        self.sessions_dir_name = sessions_dir_name
-        self.agents_dir_name = agents_dir_name
-        self.input_dir_name = input_dir_name
-        self.output_dir_name = output_dir_name
-        self.notes_file_name = notes_file_name
+        self.agent_mount_names = agent_mount_names or []
+        self.files_dir_name = files_dir_name
+        self.attachments_dir_name = attachments_dir_name
+        self.plan_file_name = plan_file_name
 
     def resolve_user_workspace(
         self,
@@ -61,38 +56,38 @@ class WorkspaceLayoutService:
         user_name: str | None,
     ) -> UserWorkspaceLayout:
         workspace_key = self.resolve_user_workspace_key(user_id=user_id, user_name=user_name)
-        root = self.workspaces_root / workspace_key
+        root = self.fs_root / workspace_key
         return UserWorkspaceLayout(
             workspace_key=workspace_key,
             root=root,
-            sessions_root=root / self.sessions_dir_name,
-            agents_root=root / self.agents_dir_name,
+            workspaces_root=root / "workspaces",
         )
 
     def ensure_user_workspace(self, user: User) -> UserWorkspaceLayout:
         layout = self.resolve_user_workspace(user_id=user.id, user_name=user.name)
-        layout.sessions_root.mkdir(parents=True, exist_ok=True)
-        layout.agents_root.mkdir(parents=True, exist_ok=True)
+        for name in self.agent_mount_names:
+            (layout.root / name).mkdir(parents=True, exist_ok=True)
+        layout.workspaces_root.mkdir(parents=True, exist_ok=True)
         return layout
 
     def ensure_session_workspace(self, *, user: User, session: Session) -> SessionWorkspaceLayout:
         user_workspace = self.ensure_user_workspace(user)
-        session_date_root = user_workspace.sessions_root / session.created_at.strftime("%Y/%m/%d")
+        session_date_root = user_workspace.workspaces_root / session.created_at.strftime("%Y/%m/%d")
         session_root = session_date_root / session.id
-        input_dir = session_root / self.input_dir_name
-        output_dir = session_root / self.output_dir_name
-        notes_file = session_root / self.notes_file_name
+        files_dir = session_root / self.files_dir_name
+        attachments_dir = session_root / self.attachments_dir_name
+        plan_file = session_root / self.plan_file_name
 
-        input_dir.mkdir(parents=True, exist_ok=True)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        notes_file.touch(exist_ok=True)
+        files_dir.mkdir(parents=True, exist_ok=True)
+        attachments_dir.mkdir(parents=True, exist_ok=True)
+        plan_file.touch(exist_ok=True)
 
         return SessionWorkspaceLayout(
             user_workspace=user_workspace,
             root=session_root,
-            input_dir=input_dir,
-            output_dir=output_dir,
-            notes_file=notes_file,
+            files_dir=files_dir,
+            attachments_dir=attachments_dir,
+            plan_file=plan_file,
         )
 
     def resolve_user_workspace_key(

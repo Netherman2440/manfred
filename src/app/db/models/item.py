@@ -32,6 +32,10 @@ class ItemModel(Base):
     arguments_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_error: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utcnow,
@@ -39,4 +43,10 @@ class ItemModel(Base):
     )
 
     agent = relationship("AgentModel")
+    attachments = relationship(
+        "ItemAttachmentModel",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     session = relationship("SessionModel")
