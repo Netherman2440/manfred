@@ -15,6 +15,7 @@ from app.api.v1.chat.schema import (
     DeliverRequest,
     MessageInputItem,
 )
+from app.config import Settings
 from app.container import Container
 from app.providers import ProviderStreamEvent, serialize_provider_stream_event
 from app.services.chat_attachments import IncomingAttachment
@@ -29,9 +30,10 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def chat(
     request: Request,
     chat_service: ChatService = Depends(Provide[Container.chat_service]),
+    settings: Settings = Depends(Provide[Container.settings]),
 ) -> ChatResponse | StreamingResponse:
     try:
-        payload, attachments = await _parse_chat_request(request)
+        payload, attachments = await _parse_chat_request(request, settings.MAX_FILE_SIZE)
     except ChatServiceValidationError as exc:
         chat_service.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -67,9 +69,10 @@ async def edit_message(
     item_id: str,
     request: Request,
     chat_service: ChatService = Depends(Provide[Container.chat_service]),
+    settings: Settings = Depends(Provide[Container.settings]),
 ) -> ChatResponse | StreamingResponse:
     try:
-        payload, attachments = await _parse_edit_request(request)
+        payload, attachments = await _parse_edit_request(request, settings.MAX_FILE_SIZE)
     except ChatServiceValidationError as exc:
         chat_service.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -118,9 +121,10 @@ async def queue_message(
     session_id: str,
     request: Request,
     chat_service: ChatService = Depends(Provide[Container.chat_service]),
+    settings: Settings = Depends(Provide[Container.settings]),
 ) -> ChatQueueResponse:
     try:
-        payload, attachments = await _parse_queue_request(request)
+        payload, attachments = await _parse_queue_request(request, settings.MAX_FILE_SIZE)
     except ChatServiceValidationError as exc:
         chat_service.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -202,10 +206,10 @@ def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent) ->
     return f"event: {event.type}\ndata: {payload}\n\n"
 
 
-async def _parse_chat_request(request: Request) -> tuple[ChatRequest, list[IncomingAttachment]]:
+async def _parse_chat_request(request: Request, max_file_size: int) -> tuple[ChatRequest, list[IncomingAttachment]]:
     if _is_multipart_request(request):
         form = await request.form()
-        attachments = await _parse_form_attachments(form)
+        attachments = await _parse_form_attachments(form, max_file_size)
         return (
             ChatRequest(
                 input=[MessageInputItem(role="user", content=_require_form_string(form, "message"))],
@@ -223,7 +227,7 @@ async def _parse_chat_request(request: Request) -> tuple[ChatRequest, list[Incom
     return ChatRequest.model_validate(body), []
 
 
-async def _parse_edit_request(request: Request) -> tuple[ChatEditRequest, list[IncomingAttachment]]:
+async def _parse_edit_request(request: Request, max_file_size: int) -> tuple[ChatEditRequest, list[IncomingAttachment]]:
     if _is_multipart_request(request):
         form = await request.form()
         return (
@@ -232,7 +236,7 @@ async def _parse_edit_request(request: Request) -> tuple[ChatEditRequest, list[I
                 stream=_parse_bool(_optional_form_string(form, "stream")),
                 retain_attachment_ids=_list_form_strings(form, "retain_attachment_ids"),
             ),
-            await _parse_form_attachments(form),
+            await _parse_form_attachments(form, max_file_size),
         )
 
     try:
@@ -242,12 +246,12 @@ async def _parse_edit_request(request: Request) -> tuple[ChatEditRequest, list[I
     return ChatEditRequest.model_validate(body), []
 
 
-async def _parse_queue_request(request: Request) -> tuple[ChatQueueRequest, list[IncomingAttachment]]:
+async def _parse_queue_request(request: Request, max_file_size: int) -> tuple[ChatQueueRequest, list[IncomingAttachment]]:
     if _is_multipart_request(request):
         form = await request.form()
         return (
             ChatQueueRequest(message=_require_form_string(form, "message")),
-            await _parse_form_attachments(form),
+            await _parse_form_attachments(form, max_file_size),
         )
 
     try:
@@ -262,7 +266,7 @@ def _is_multipart_request(request: Request) -> bool:
     return content_type.startswith("multipart/form-data")
 
 
-async def _parse_form_attachments(form: FormData) -> list[IncomingAttachment]:
+async def _parse_form_attachments(form: FormData, max_file_size: int) -> list[IncomingAttachment]:
     uploads = [
         value
         for key in ("attachments", "attachments[]")
@@ -272,6 +276,11 @@ async def _parse_form_attachments(form: FormData) -> list[IncomingAttachment]:
     attachments: list[IncomingAttachment] = []
     for upload in uploads:
         content = await upload.read()
+        if len(content) > max_file_size:
+            raise ChatServiceValidationError(
+                f"Attachment '{upload.filename or 'attachment'}' exceeds the maximum allowed size "
+                f"of {max_file_size} bytes."
+            )
         attachments.append(
             IncomingAttachment(
                 file_name=upload.filename or "attachment",

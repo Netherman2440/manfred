@@ -1218,18 +1218,13 @@ class Runner:
 
     @staticmethod
     def _build_attachment_provider_inputs(attachments: list[Attachment]) -> list[ProviderMessageInputItem]:
-        return [
-            ProviderMessageInputItem(
-                role=MessageRole.USER.value,
-                content=(
-                    f"Attached file: {attachment.file_name}\n"
-                    f"media_type: {attachment.media_type}\n"
-                    f"size_bytes: {attachment.size_bytes}\n"
-                    f"path: {attachment.path}"
-                ),
-            )
-            for attachment in attachments
-        ]
+        if not attachments:
+            return []
+        content = "\n\n".join(
+            f"Attached file: {a.file_name}\nmedia_type: {a.media_type}\nsize_bytes: {a.size_bytes}\npath: {a.path}"
+            for a in attachments
+        )
+        return [ProviderMessageInputItem(role=MessageRole.USER.value, content=content)]
 
     def store_provider_output(
         self,
@@ -1580,7 +1575,8 @@ class Runner:
     ]:
         request_input = self.map_items_to_provider_input(context.items)
         fs_instructions = self.filesystem_service.generate_filesystem_instructions()
-        instructions = f"{context.agent.config.task}\n\n{fs_instructions}"
+        task = (context.agent.config.task or "").strip()
+        instructions = f"{task}\n\n{fs_instructions}" if task else fs_instructions
         request = ProviderRequest(
             model=model,
             instructions=instructions,

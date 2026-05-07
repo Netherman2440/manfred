@@ -75,6 +75,7 @@ class WorkspaceScopedFilesystemPolicy:
         workspace_root = Path(subject.workspace_path).resolve()
         relative = resolved_path.relative_path
         effective_path = workspace_root if relative == relative.parent else workspace_root / relative
+        effective_path = effective_path.resolve()
 
         if not effective_path.is_relative_to(workspace_root):
             return False, f"Path '{resolved_path.requested_path}' escapes the session workspace.", effective_path
@@ -96,6 +97,7 @@ class WorkspaceScopedFilesystemPolicy:
         scoped_root = (self._fs_root / user_key / resolved_path.mount.name).resolve()
         relative = resolved_path.relative_path
         effective_path = scoped_root if relative == relative.parent else scoped_root / relative
+        effective_path = effective_path.resolve()
 
         if not effective_path.is_relative_to(scoped_root):
             return (

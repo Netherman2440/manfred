@@ -247,6 +247,7 @@ class Container(containers.DeclarativeContainer):
     chat_attachment_storage_service = providers.Singleton(
         ChatAttachmentStorageService,
         workspace_layout_service=workspace_layout_service,
+        max_file_size=settings.provided.MAX_FILE_SIZE,
     )
     filesystem_service = providers.Singleton(
         build_filesystem_service,

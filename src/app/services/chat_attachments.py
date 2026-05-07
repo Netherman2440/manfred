@@ -23,8 +23,9 @@ class StoredAttachment:
 
 
 class ChatAttachmentStorageService:
-    def __init__(self, *, workspace_layout_service: WorkspaceLayoutService) -> None:
+    def __init__(self, *, workspace_layout_service: WorkspaceLayoutService, max_file_size: int) -> None:
         self.workspace_layout_service = workspace_layout_service
+        self._max_file_size = max_file_size
 
     def store(
         self,
@@ -41,9 +42,12 @@ class ChatAttachmentStorageService:
         created_paths: list[Path] = []
 
         for attachment in attachments:
-            resolved_name = self._resolve_available_name(layout.attachments_dir, attachment.file_name)
-            destination = layout.attachments_dir / resolved_name
-            destination.write_bytes(attachment.content)
+            if len(attachment.content) > self._max_file_size:
+                raise ValueError(
+                    f"Attachment '{attachment.file_name}' exceeds the maximum allowed size "
+                    f"of {self._max_file_size} bytes."
+                )
+            destination, resolved_name = self._store_atomically(layout.attachments_dir, attachment)
             created_paths.append(destination)
             stored.append(
                 StoredAttachment(
@@ -64,13 +68,18 @@ class ChatAttachmentStorageService:
                 continue
 
     @staticmethod
-    def _resolve_available_name(target_dir: Path, file_name: str) -> str:
-        candidate = Path(file_name).name or "attachment"
+    def _store_atomically(target_dir: Path, attachment: IncomingAttachment) -> tuple[Path, str]:
+        candidate = Path(attachment.file_name).name or "attachment"
         stem = Path(candidate).stem or "attachment"
         suffix = Path(candidate).suffix
         resolved = candidate
         counter = 1
-        while (target_dir / resolved).exists():
-            resolved = f"{stem}({counter}){suffix}"
-            counter += 1
-        return resolved
+        while True:
+            destination = target_dir / resolved
+            try:
+                with destination.open("xb") as f:
+                    f.write(attachment.content)
+                return destination, resolved
+            except FileExistsError:
+                resolved = f"{stem}({counter}){suffix}"
+                counter += 1

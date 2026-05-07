@@ -193,6 +193,7 @@ class ChatService:
         try:
             setup, created_files = await self.prepare_chat(chat_request, attachments=attachments)
             if not setup.ok or setup.value is None:
+                self.attachment_storage_service.cleanup_files(created_files)
                 yield ProviderErrorEvent(error=setup.error or "Chat setup failed.")
                 return
 
