@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.db.base import utcnow
-from app.domain import Agent, Item, MessageRole, QueuedInput
+from app.domain import Agent, Item, QueuedInput
 from app.domain.repositories import ItemRepository, QueuedInputRepository
 
 
@@ -21,7 +21,18 @@ class SessionMessageQueue:
     def pending_count(self, session_id: str, agent_id: str) -> int:
         return self.queued_input_repository.get_pending_count(session_id, agent_id)
 
-    def consume_into_items(self, *, agent: Agent, item_factory) -> list[Item]:  # noqa: ANN001
+from collections.abc import Callable
+
+from app.db.base import utcnow
+from app.domain import Agent, Item, MessageRole, QueuedInput
+from app.domain.repositories import ItemRepository, QueuedInputRepository
+
+    def consume_into_items(
+        self,
+        *,
+        agent: Agent,
+        item_factory: Callable[[QueuedInput], Item],
+    ) -> list[Item]:
         pending = self.list_pending(agent.session_id, agent.id)
         if not pending:
             return []

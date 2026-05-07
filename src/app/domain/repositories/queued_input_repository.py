@@ -68,15 +68,13 @@ class QueuedInputRepository:
         return self._to_domain(model)
 
     def delete_pending_for_session_agent(self, session_id: str, agent_id: str) -> None:
-        models = self.session.scalars(
-            select(QueuedInputModel).where(
+        self.session.execute(
+            delete(QueuedInputModel).where(
                 QueuedInputModel.session_id == session_id,
                 QueuedInputModel.agent_id == agent_id,
                 QueuedInputModel.consumed_at.is_(None),
             )
-        ).all()
-        for model in models:
-            self.session.delete(model)
+        )
         self.session.flush()
 
     @staticmethod
