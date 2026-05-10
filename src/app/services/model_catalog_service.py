@@ -91,7 +91,10 @@ class ModelCatalogService:
 
             name = raw.get("name") or model_id
             context_length = raw.get("context_length")
-            context_length = int(context_length) if isinstance(context_length, (int, float, str)) else None
+            try:
+                context_length = int(context_length) if isinstance(context_length, (int, float, str)) else None
+            except (ValueError, TypeError):
+                context_length = None
 
             pricing = raw.get("pricing") or {}
             pricing_prompt = self._parse_price(pricing.get("prompt"))

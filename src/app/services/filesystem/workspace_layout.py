@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import unicodedata
@@ -7,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.domain import Session, User
+
+logger = logging.getLogger(__name__)
 
 
 _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9._-]+")
@@ -77,7 +80,17 @@ class WorkspaceLayoutService:
         if self.default_agent_source_dir and self.default_agent_source_dir.is_dir():
             target = layout.root / "agents" / self.default_agent_name
             if not target.exists():
-                shutil.copytree(self.default_agent_source_dir, target)
+                try:
+                    shutil.copytree(self.default_agent_source_dir, target)
+                except FileExistsError:
+                    pass
+                except OSError:
+                    logger.error(
+                        "Failed to copy default agent %s → %s",
+                        self.default_agent_source_dir,
+                        target,
+                        exc_info=True,
+                    )
 
         return layout
 

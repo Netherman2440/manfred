@@ -126,3 +126,8 @@ class SessionDetailPayloadSchema(BaseModel):
 
 class SessionDetailResponse(BaseModel):
     data: SessionDetailPayloadSchema
+
+
+class UserMeResponse(BaseModel):
+    id: str
+    name: str

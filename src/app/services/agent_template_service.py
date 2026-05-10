@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -9,9 +10,12 @@ from pathlib import Path
 from sqlalchemy.orm import Session as DbSession
 
 from app.db.models import AgentModel
+from app.db.models.session import SessionModel
 from app.domain import User
 from app.services.agent_loader import AgentLoader, AgentTemplate, render_agent_frontmatter
 from app.services.filesystem import WorkspaceLayoutService
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +121,7 @@ class AgentTemplateService:
                     )
                 )
             except Exception:
-                # Skip unreadable/invalid agents rather than crashing the list
+                logger.warning("Skipping unreadable agent %s", agent_file, exc_info=True)
                 continue
 
         return summaries
@@ -148,6 +152,7 @@ class AgentTemplateService:
         return self._to_detail(template)
 
     def update_template(self, user: User, name: str, payload: AgentTemplateInput) -> AgentTemplateDetail:
+        logger.info("update_template name=%s color=%s model=%s", name, payload.color, payload.model)
         if payload.name != name:
             raise AgentTemplateInvalid("name", "Rename not supported — name must match URL path parameter.")
 
@@ -160,7 +165,15 @@ class AgentTemplateService:
 
         self._write_agent_file(agent_dir, payload, atomic=True)
 
-        template = self.agent_loader.load_agent_template(agent_dir / f"{name}{AGENT_EXTENSION}")
+        agent_file = agent_dir / f"{name}{AGENT_EXTENSION}"
+        template = self.agent_loader.load_agent_template(agent_file)
+        logger.info(
+            "update_template after reload name=%s color=%s model=%s file=%s",
+            template.agent_name,
+            template.color,
+            template.model,
+            agent_file,
+        )
         return self._to_detail(template)
 
     def delete_template(self, user: User, name: str) -> None:
@@ -169,18 +182,25 @@ class AgentTemplateService:
         if not agent_dir.exists():
             raise AgentTemplateNotFound(f"Agent not found: {name}")
 
-        # Atomically: remove folder then cascade-delete DB agents with this name.
-        # If DB delete fails, folder is already gone — acceptable for single-user dev env.
-        # If folder removal fails, nothing is touched.
-        shutil.rmtree(agent_dir)
+        # Delete DB records first so a filesystem failure leaves DB clean.
+        # If rmtree fails after a successful commit, the folder becomes orphaned
+        # but can be cleaned up manually without data loss.
         try:
+            user_session_ids = [
+                row.id
+                for row in self.db_session.query(SessionModel.id)
+                .filter(SessionModel.user_id == user.id)
+                .all()
+            ]
             self.db_session.query(AgentModel).filter(
-                AgentModel.agent_name == name
+                AgentModel.agent_name == name,
+                AgentModel.session_id.in_(user_session_ids),
             ).delete(synchronize_session=False)
             self.db_session.commit()
         except Exception:
             self.db_session.rollback()
             raise
+        shutil.rmtree(agent_dir)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -220,12 +240,14 @@ class AgentTemplateService:
         content = render_agent_frontmatter(template) + payload.system_prompt
 
         target_file = agent_dir / f"{payload.name}{AGENT_EXTENSION}"
+        logger.debug("_write_agent_file target=%s atomic=%s color=%s content_head=%r", target_file, atomic, payload.color, content[:120])
         if atomic:
             tmp_file = target_file.with_suffix(".tmp")
             tmp_file.write_text(content, encoding="utf-8")
             os.replace(tmp_file, target_file)
         else:
             target_file.write_text(content, encoding="utf-8")
+        logger.info("_write_agent_file done target=%s", target_file)
 
     @staticmethod
     def _to_detail(template: AgentTemplate) -> AgentTemplateDetail:

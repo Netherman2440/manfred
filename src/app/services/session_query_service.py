@@ -36,10 +36,14 @@ class SessionQueryService:
         for session in sessions:
             root_agent_id = session.root_agent_id
             if not root_agent_id:
-                continue
+                raise SessionQueryIntegrityError(
+                    f"Session {session.id} has no root_agent_id.",
+                )
             root_agent = self.agent_repository.get(root_agent_id)
             if root_agent is None:
-                continue
+                raise SessionQueryIntegrityError(
+                    f"Session {session.id} references missing root agent {root_agent_id}.",
+                )
             response.append(
                 {
                     "id": session.id,

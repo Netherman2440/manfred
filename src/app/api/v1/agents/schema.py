@@ -32,7 +32,7 @@ class AgentCreateRequest(BaseModel):
 
 
 class AgentUpdateRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=48)
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     description: str | None = Field(default=None, max_length=500)
     model: str | None = None

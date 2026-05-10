@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
+
+logger = logging.getLogger(__name__)
 
 from app.api.v1.agents.schema import (
     AgentCreateRequest,
@@ -14,7 +18,6 @@ from app.api.v1.agents.schema import (
 )
 from app.container import Container
 from app.domain import User
-from app.domain.repositories import AgentRepository, SessionRepository
 from app.services.agent_template_service import (
     AgentTemplateExists,
     AgentTemplateInput,
@@ -130,6 +133,13 @@ def update_agent(
     agent_template_service: AgentTemplateService = Depends(Provide[Container.agent_template_service]),
     settings=Depends(Provide[Container.settings]),
 ) -> AgentDetailResponse:
+    logger.info(
+        "update_agent name=%s request.name=%s request.color=%s request.model=%s",
+        name,
+        request.name,
+        request.color,
+        request.model,
+    )
     user = _get_default_user(settings)
     payload = AgentTemplateInput(
         name=request.name,
@@ -139,6 +149,7 @@ def update_agent(
         tools=request.tools,
         system_prompt=request.system_prompt,
     )
+    logger.debug("update_agent payload=%r", payload)
     try:
         detail = agent_template_service.update_template(user, name, payload)
     except AgentTemplateNotFound as exc:
@@ -149,6 +160,7 @@ def update_agent(
             detail=str(exc),
         ) from exc
 
+    logger.info("update_agent result name=%s color=%s model=%s", detail.name, detail.color, detail.model)
     return AgentDetailResponse(
         data=AgentDetailSchema(
             name=detail.name,

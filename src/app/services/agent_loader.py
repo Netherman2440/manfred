@@ -167,7 +167,7 @@ class AgentLoader:
         if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
             return value[1:-1].replace('\\"', '"')
         if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
-            return value[1:-1]
+            return value[1:-1].replace("\\'", "'")
         return value
 
     @staticmethod
@@ -236,8 +236,8 @@ def render_agent_frontmatter(template: AgentTemplate) -> str:
     """
 
     def _quote_if_needed(value: str) -> str:
-        if any(ch in value for ch in (':', '#', '"', "'")):
-            escaped = value.replace('"', '\\"')
+        if any(ch in value for ch in (':', '#', '"', "'", '\n', '\r', '\\')):
+            escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
             return f'"{escaped}"'
         return value
 
