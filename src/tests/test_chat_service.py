@@ -83,15 +83,25 @@ class FakeMcpManager:
 
 
 class FakeAgentLoader:
-    def __init__(self, *, root_agent: LoadedAgent, child_agents: dict[str, LoadedAgent] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        root_agent: LoadedAgent,
+        child_agents: dict[str, LoadedAgent] | None = None,
+        root_agent_name: str | None = None,
+    ) -> None:
         self._root_agent = root_agent
         self._child_agents = child_agents or {}
+        self._root_agent_name = root_agent_name or root_agent.agent_name
 
     def load_agent(self, agent_path):  # noqa: ANN001
         del agent_path
         return self._root_agent
 
     def load_agent_by_name(self, agent_name: str) -> LoadedAgent:
+        # Return root agent for the default/root agent name
+        if agent_name == self._root_agent_name:
+            return self._root_agent
         agent = self._child_agents.get(agent_name)
         if agent is None:
             raise FileNotFoundError(f"Agent not found: {agent_name}")
@@ -303,7 +313,7 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
@@ -371,7 +381,7 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
@@ -435,7 +445,7 @@ def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Pat
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
@@ -531,7 +541,7 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
@@ -762,7 +772,7 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
@@ -874,7 +884,7 @@ async def test_process_queue_persists_pending_input_for_waiting_root_agent(
         session=db_session,
         settings=Settings(
             _env_file=None,
-            DEFAULT_AGENT="ignored",
+            DEFAULT_AGENT="manfred",
             OPEN_ROUTER_LLM_MODEL="test-model",
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",

@@ -793,8 +793,16 @@ class ChatService:
         return session
 
     def _resolve_agent_config(self, request_config: ChatAgentConfigInput | None) -> ResolvedAgentConfig:
-        loaded_agent = self.agent_loader.load_agent(self.settings.DEFAULT_AGENT)
         default_model = f"openrouter:{self.settings.OPEN_ROUTER_LLM_MODEL}"
+        agent_name = self.settings.DEFAULT_AGENT
+        if request_config is not None and request_config.agent_name:
+            agent_name = request_config.agent_name
+
+        try:
+            loaded_agent = self.agent_loader.load_agent_by_name(agent_name)
+        except FileNotFoundError as exc:
+            raise ChatServiceNotFoundError(f"Agent template not found: {agent_name}") from exc
+
         base_config = ResolvedAgentConfig(
             agent_name=loaded_agent.agent_name,
             model=loaded_agent.model or default_model,

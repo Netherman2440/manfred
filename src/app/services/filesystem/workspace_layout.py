@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ class WorkspaceLayoutService:
         repo_root: Path,
         workspace_path: str,
         agent_mount_names: list[str] | None = None,
+        default_agent_source_dir: Path | None = None,
+        default_agent_name: str = "manfred",
         files_dir_name: str = "files",
         attachments_dir_name: str = "attachments",
         plan_file_name: str = "plan.md",
@@ -45,6 +48,8 @@ class WorkspaceLayoutService:
             else fs_root.resolve()
         )
         self.agent_mount_names = agent_mount_names or []
+        self.default_agent_source_dir = default_agent_source_dir
+        self.default_agent_name = default_agent_name
         self.files_dir_name = files_dir_name
         self.attachments_dir_name = attachments_dir_name
         self.plan_file_name = plan_file_name
@@ -68,6 +73,12 @@ class WorkspaceLayoutService:
         for name in self.agent_mount_names:
             (layout.root / name).mkdir(parents=True, exist_ok=True)
         layout.workspaces_root.mkdir(parents=True, exist_ok=True)
+
+        if self.default_agent_source_dir and self.default_agent_source_dir.is_dir():
+            target = layout.root / "agents" / self.default_agent_name
+            if not target.exists():
+                shutil.copytree(self.default_agent_source_dir, target)
+
         return layout
 
     def ensure_session_workspace(self, *, user: User, session: Session) -> SessionWorkspaceLayout:

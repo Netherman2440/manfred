@@ -30,6 +30,33 @@ class SessionQueryService:
     def close(self) -> None:
         self.session_repository.session.close()
 
+    def list_sessions_by_agent_name(self, user_id: str, agent_name: str) -> list[dict[str, Any]]:
+        sessions = self.session_repository.list_by_user_and_agent_name(user_id, agent_name)
+        response: list[dict[str, Any]] = []
+        for session in sessions:
+            root_agent_id = session.root_agent_id
+            if not root_agent_id:
+                continue
+            root_agent = self.agent_repository.get(root_agent_id)
+            if root_agent is None:
+                continue
+            response.append(
+                {
+                    "id": session.id,
+                    "user_id": session.user_id,
+                    "title": session.title,
+                    "status": session.status.value,
+                    "root_agent_id": root_agent.id,
+                    "root_agent_name": root_agent.agent_name or agent_name,
+                    "root_agent_status": root_agent.status.value,
+                    "waiting_for_count": len(root_agent.waiting_for),
+                    "last_message_preview": self._build_last_message_preview(session.id),
+                    "created_at": session.created_at,
+                    "updated_at": session.updated_at,
+                }
+            )
+        return response
+
     def list_user_sessions(self, user_id: str) -> list[dict[str, Any]]:
         sessions = self.session_repository.list_by_user(user_id)
         response: list[dict[str, Any]] = []

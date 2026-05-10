@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     API_CORS_ALLOW_LOCALHOST: bool = True
     DATABASE_URL: str = "sqlite:///./manfred.db"
 
-    DEFAULT_AGENT: str = "default_agents/manfred.agent.md"
+    DEFAULT_AGENT: str = "manfred"
+    DEFAULT_AGENT_SOURCE_DIR: str = "default_agents/manfred"
     WORKSPACE_PATH: str = ".agent_data"
     FS_MOUNTS: str = "agents,skills,workflows,shared"
     FS_EXCLUDE: str = ""
