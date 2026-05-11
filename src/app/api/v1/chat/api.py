@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from starlette.datastructures import FormData, UploadFile
 
 from app.api.v1.chat.schema import (
+    ChatAgentConfigInput,
     ChatEditRequest,
     ChatQueueRequest,
     ChatQueueResponse,
@@ -210,12 +211,14 @@ async def _parse_chat_request(request: Request, max_file_size: int) -> tuple[Cha
     if _is_multipart_request(request):
         form = await request.form()
         attachments = await _parse_form_attachments(form, max_file_size)
+        agent_name = _optional_form_string(form, "agent_name")
         return (
             ChatRequest(
                 input=[MessageInputItem(role="user", content=_require_form_string(form, "message"))],
                 session_id=_optional_form_string(form, "session_id"),
                 stream=_parse_bool(_optional_form_string(form, "stream")),
                 include_tool_result=_parse_bool(_optional_form_string(form, "include_tool_result")),
+                agent_config=ChatAgentConfigInput(agent_name=agent_name) if agent_name else None,
             ),
             attachments,
         )

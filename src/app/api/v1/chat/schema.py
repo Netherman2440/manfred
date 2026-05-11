@@ -34,6 +34,7 @@ ChatToolDefinitionInput = Annotated[
 
 
 class ChatAgentConfigInput(BaseModel):
+    agent_name: str | None = None
     model: str | None = None
     task: str | None = None
     tools: list[ChatToolDefinitionInput] | None = None

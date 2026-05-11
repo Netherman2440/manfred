@@ -29,10 +29,15 @@ from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.cancellation import ActiveRunRegistry
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
+import httpx
+
 from app.services.agent_loader import AgentLoader
+from app.services.agent_template_service import AgentTemplateService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
+from app.services.model_catalog_service import ModelCatalogService
 from app.services.session_query_service import SessionQueryService
+from app.services.tool_catalog_service import ToolCatalogService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
 from app.tools.definitions.delegate import delegate_tool
@@ -88,11 +93,14 @@ def build_workspace_layout_service(
     *,
     settings: Settings,
     repo_root: Path,
+    default_agent_source_dir: Path | None = None,
 ) -> WorkspaceLayoutService:
     return WorkspaceLayoutService(
         repo_root=repo_root,
         workspace_path=settings.WORKSPACE_PATH,
         agent_mount_names=settings.mount_names(),
+        default_agent_source_dir=default_agent_source_dir,
+        default_agent_name=settings.DEFAULT_AGENT,
         files_dir_name=settings.FILES_DIR_NAME,
         attachments_dir_name=settings.ATTACHMENTS_DIR_NAME,
         plan_file_name=settings.PLAN_FILE_NAME,
@@ -117,6 +125,24 @@ def build_provider_registry(openrouter_provider: OpenRouterProvider) -> Provider
 
 def get_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _build_agent_loader_workspace_path(*, settings: Settings, repo_root: Path) -> str:
+    """Return the user workspace root path string for AgentLoader.
+    Since this is a single-user app, compute user workspace key from default user settings.
+    """
+    from app.services.filesystem import WorkspaceLayoutService as _WLS  # local import to avoid circular
+    wls = _WLS(repo_root=repo_root, workspace_path=settings.WORKSPACE_PATH)
+    workspace_key = wls.resolve_user_workspace_key(
+        user_id=settings.DEFAULT_USER_ID,
+        user_name=settings.DEFAULT_USER_NAME,
+    )
+    root = Path(settings.WORKSPACE_PATH)
+    if not root.is_absolute():
+        root = (repo_root / root).resolve()
+    else:
+        root = root.resolve()
+    return str(root / workspace_key)
 
 
 def build_mcp_manager(
@@ -229,7 +255,10 @@ class Container(containers.DeclarativeContainer):
         packages=[
             "app",
             "app.api.v1",
+            "app.api.v1.agents",
             "app.api.v1.chat",
+            "app.api.v1.models",
+            "app.api.v1.tools",
             "app.api.v1.users",
         ],
     )
@@ -239,10 +268,17 @@ class Container(containers.DeclarativeContainer):
     session_factory = providers.Singleton(build_session_factory, engine=db_engine)
     db_session = providers.Factory(build_db_session, session_factory=session_factory)
 
+    repo_root = providers.Callable(get_repo_root)
+
     workspace_layout_service = providers.Singleton(
         build_workspace_layout_service,
         settings=settings,
-        repo_root=providers.Callable(get_repo_root),
+        repo_root=repo_root,
+        default_agent_source_dir=providers.Callable(
+            lambda settings, repo_root: repo_root / settings.DEFAULT_AGENT_SOURCE_DIR,
+            settings=settings,
+            repo_root=repo_root,
+        ),
     )
     chat_attachment_storage_service = providers.Singleton(
         ChatAttachmentStorageService,
@@ -252,7 +288,7 @@ class Container(containers.DeclarativeContainer):
     filesystem_service = providers.Singleton(
         build_filesystem_service,
         settings=settings,
-        repo_root=providers.Callable(get_repo_root),
+        repo_root=repo_root,
         workspace_layout_service=workspace_layout_service,
     )
     tool_registry = providers.Singleton(
@@ -278,14 +314,18 @@ class Container(containers.DeclarativeContainer):
     mcp_manager = providers.Singleton(
         build_mcp_manager,
         settings=settings,
-        repo_root=providers.Callable(get_repo_root),
+        repo_root=repo_root,
     )
     agent_loader = providers.Singleton(
         AgentLoader,
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,
-        repo_root=providers.Callable(get_repo_root),
-        workspace_path=settings.provided.WORKSPACE_PATH,
+        repo_root=repo_root,
+        workspace_path=providers.Callable(
+            _build_agent_loader_workspace_path,
+            settings=settings,
+            repo_root=repo_root,
+        ),
     )
 
     chat_service = providers.Factory(
@@ -305,4 +345,26 @@ class Container(containers.DeclarativeContainer):
     session_query_service = providers.Factory(
         build_session_query_service,
         session=db_session,
+    )
+
+    http_client = providers.Singleton(httpx.AsyncClient)
+
+    agent_template_service = providers.Factory(
+        AgentTemplateService,
+        agent_loader=agent_loader,
+        workspace_layout_service=workspace_layout_service,
+        db_session=db_session,
+    )
+
+    tool_catalog_service = providers.Factory(
+        ToolCatalogService,
+        tool_registry=tool_registry,
+        mcp_manager=mcp_manager,
+    )
+
+    model_catalog_service = providers.Singleton(
+        ModelCatalogService,
+        http_client=http_client,
+        api_url=settings.provided.OPEN_ROUTER_URL,
+        api_key=settings.provided.OPEN_ROUTER_API_KEY,
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app.db.models import SessionModel
+from app.db.models import AgentModel, SessionModel
 from app.domain.session import Session
 from app.domain.types import SessionStatus
 
@@ -21,6 +21,27 @@ class SessionRepository:
             select(SessionModel)
             .where(SessionModel.user_id == user_id)
             .order_by(SessionModel.updated_at.desc())
+        ).all()
+        return [self._to_domain(model) for model in models]
+
+    def list_by_user_and_agent_name(
+        self,
+        user_id: str,
+        agent_name: str,
+        *,
+        limit: int = 50,
+    ) -> list[Session]:
+        """Return sessions for user where the root agent has agent_name (depth=0)."""
+        models = self.session.scalars(
+            select(SessionModel)
+            .join(AgentModel, AgentModel.id == SessionModel.root_agent_id)
+            .where(
+                SessionModel.user_id == user_id,
+                AgentModel.agent_name == agent_name,
+                AgentModel.depth == 0,
+            )
+            .order_by(SessionModel.updated_at.desc())
+            .limit(limit)
         ).all()
         return [self._to_domain(model) for model in models]
 

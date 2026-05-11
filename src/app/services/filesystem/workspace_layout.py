@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
+import shutil
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.domain import Session, User
+
+logger = logging.getLogger(__name__)
 
 
 _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9._-]+")
@@ -34,6 +38,8 @@ class WorkspaceLayoutService:
         repo_root: Path,
         workspace_path: str,
         agent_mount_names: list[str] | None = None,
+        default_agent_source_dir: Path | None = None,
+        default_agent_name: str = "manfred",
         files_dir_name: str = "files",
         attachments_dir_name: str = "attachments",
         plan_file_name: str = "plan.md",
@@ -45,6 +51,18 @@ class WorkspaceLayoutService:
             else fs_root.resolve()
         )
         self.agent_mount_names = agent_mount_names or []
+        self.default_agent_source_dir = default_agent_source_dir
+
+        normalized_default_agent_name = default_agent_name.strip()
+        if (
+            not normalized_default_agent_name
+            or normalized_default_agent_name in {".", ".."}
+            or Path(normalized_default_agent_name).name != normalized_default_agent_name
+            or any(sep in normalized_default_agent_name for sep in ("/", "\\"))
+        ):
+            raise ValueError("default_agent_name must be a single safe path segment.")
+        self.default_agent_name = normalized_default_agent_name
+
         self.files_dir_name = files_dir_name
         self.attachments_dir_name = attachments_dir_name
         self.plan_file_name = plan_file_name
@@ -68,6 +86,27 @@ class WorkspaceLayoutService:
         for name in self.agent_mount_names:
             (layout.root / name).mkdir(parents=True, exist_ok=True)
         layout.workspaces_root.mkdir(parents=True, exist_ok=True)
+
+        if self.default_agent_source_dir and not self.default_agent_source_dir.is_dir():
+            logger.warning(
+                "Configured default_agent_source_dir is missing or not a directory; seeding skipped: %s",
+                self.default_agent_source_dir,
+            )
+        elif self.default_agent_source_dir:
+            target = layout.root / "agents" / self.default_agent_name
+            if not target.exists():
+                try:
+                    shutil.copytree(self.default_agent_source_dir, target)
+                except FileExistsError:
+                    pass
+                except OSError:
+                    logger.error(
+                        "Failed to copy default agent %s → %s",
+                        self.default_agent_source_dir,
+                        target,
+                        exc_info=True,
+                    )
+
         return layout
 
     def ensure_session_workspace(self, *, user: User, session: Session) -> SessionWorkspaceLayout:

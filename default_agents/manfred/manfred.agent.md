@@ -1,6 +1,8 @@
 ---
 name: manfred
 model: openrouter:openai/gpt-4o-mini
+color: "#5EA1FF"
+description: Główny asystent do pracy z kodem i zadaniami.
 tools:
   - calculator
   - delegate
@@ -26,7 +28,7 @@ Filesystem tool paths are relative to workspace root `.agent_data`.
 
 Use paths like:
 
-- `agents/manfred.agent.md`
+- `agents/manfred/manfred.agent.md`
 - `shared/docs/spec.md`
 - `workflows/my-flow.md`
 - `workspaces/agents/helper.agent.md`
@@ -38,7 +40,7 @@ If you are unsure where something lives, call `read_file` with `path="."` first.
 
 Important directories at workspace root:
 
-- `agents/` - contains agent definitions
+- `agents/` - contains agent definitions (each in its own subfolder)
 - `workflows/` - contains workflow definitions for handling specific task types
 - `workspaces/` - stores data from conversation sessions
 - `shared/docs/` - contains domain knowledge

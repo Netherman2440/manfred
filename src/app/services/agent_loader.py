@@ -17,8 +17,11 @@ logger = logging.getLogger("app.services.agent_loader")
 class AgentTemplate:
     agent_name: str
     model: str | None
+    color: str | None
+    description: str | None
     tools: list[str]
     system_prompt: str
+    source_dir: Path
 
 
 @dataclass(slots=True, frozen=True)
@@ -56,21 +59,53 @@ class AgentLoader:
 
     def load_agent_by_name(self, agent_name: str) -> LoadedAgent:
         normalized_name = agent_name.strip()
-        if not normalized_name:
+        if (
+            not normalized_name
+            or normalized_name in {".", ".."}
+            or Path(normalized_name).name != normalized_name
+            or any(sep in normalized_name for sep in ("/", "\\"))
+        ):
             raise ValueError("agent_name must be a non-empty string")
 
         return self.load_agent(self._agent_path_for_name(normalized_name))
 
     def load_agent_template(self, agent_path: str | Path) -> AgentTemplate:
-        file_path = self._resolve_agent_path(agent_path)
+        path = Path(agent_path)
+        # Accept either a folder (agents/{name}/) or a file ({name}.agent.md)
+        if not path.is_absolute():
+            path = self.repo_root / path
+        path = path.resolve()
+
+        if path.is_dir():
+            # Folder-based: look for {name}.agent.md inside
+            folder_name = path.name
+            file_path = path / f"{folder_name}{AGENT_EXTENSION}"
+        else:
+            file_path = path
+
         content = file_path.read_text(encoding="utf-8")
         metadata, system_prompt = self._split_frontmatter(content)
 
         raw_agent_name = metadata.get("agent_name") or metadata.get("name")
         agent_name = str(raw_agent_name or self._agent_name_from_path(file_path))
+        agent_name = self._unquote(agent_name)
         model = metadata.get("model")
         if not isinstance(model, str) or not model.strip():
             model = None
+        else:
+            model = self._unquote(model.strip()) or None
+
+        color = metadata.get("color")
+        if not isinstance(color, str) or not color.strip():
+            color = None
+        else:
+            color = self._unquote(color.strip()) or None
+
+        description = metadata.get("description")
+        if not isinstance(description, str) or not description.strip():
+            description = None
+        else:
+            description = self._unquote(description.strip()) or None
 
         raw_tools = metadata.get("tools")
         tools = raw_tools if isinstance(raw_tools, list) else []
@@ -78,8 +113,11 @@ class AgentLoader:
         return AgentTemplate(
             agent_name=agent_name,
             model=model,
+            color=color,
+            description=description,
             tools=[tool for tool in tools if isinstance(tool, str) and tool.strip()],
             system_prompt=system_prompt.strip(),
+            source_dir=file_path.parent,
         )
 
     def resolve_tool_definitions(self, tool_names: list[str]) -> list[ToolDefinition]:
@@ -125,7 +163,17 @@ class AgentLoader:
         return path.resolve()
 
     def _agent_path_for_name(self, agent_name: str) -> Path:
-        return Path(self.workspace_path) / "agents" / f"{agent_name}{AGENT_EXTENSION}"
+        return Path(self.workspace_path) / "agents" / agent_name / f"{agent_name}{AGENT_EXTENSION}"
+
+    @staticmethod
+    def _unquote(value: str) -> str:
+        """Strip surrounding double or single quotes from a metadata value."""
+        value = value.strip()
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            return value[1:-1].replace('\\"', '"')
+        if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+            return value[1:-1].replace("\\'", "'")
+        return value
 
     @staticmethod
     def _agent_name_from_path(agent_path: Path) -> str:
@@ -183,3 +231,48 @@ class AgentLoader:
             current_list_key = key
 
         return metadata
+
+
+def render_agent_frontmatter(template: AgentTemplate) -> str:
+    """Render deterministic frontmatter compatible with AgentLoader._parse_frontmatter.
+
+    Key order: name, model, color, description, tools.
+    Strings containing ':', '#', or quotes are wrapped in double-quotes.
+    """
+
+    def _quote_if_needed(value: str) -> str:
+        if any(ch in value for ch in (':', '#', '"', "'", '\n', '\r', '\\')):
+            escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+            return f'"{escaped}"'
+        return value
+
+    lines: list[str] = ["---"]
+
+    lines.append(f"name: {_quote_if_needed(template.agent_name)}")
+
+    if template.model:
+        lines.append(f"model: {_quote_if_needed(template.model)}")
+    else:
+        lines.append("model:")
+
+    if template.color:
+        lines.append(f"color: {_quote_if_needed(template.color)}")
+    else:
+        lines.append("color:")
+
+    if template.description:
+        lines.append(f"description: {_quote_if_needed(template.description)}")
+    else:
+        lines.append("description:")
+
+    if template.tools:
+        lines.append("tools:")
+        for tool in template.tools:
+            lines.append(f"  - {tool}")
+    else:
+        lines.append("tools:")
+
+    lines.append("---")
+    lines.append("")
+
+    return "\n".join(lines)
