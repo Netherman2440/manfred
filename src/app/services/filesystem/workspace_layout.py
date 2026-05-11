@@ -52,7 +52,17 @@ class WorkspaceLayoutService:
         )
         self.agent_mount_names = agent_mount_names or []
         self.default_agent_source_dir = default_agent_source_dir
-        self.default_agent_name = default_agent_name
+
+        normalized_default_agent_name = default_agent_name.strip()
+        if (
+            not normalized_default_agent_name
+            or normalized_default_agent_name in {".", ".."}
+            or Path(normalized_default_agent_name).name != normalized_default_agent_name
+            or any(sep in normalized_default_agent_name for sep in ("/", "\\"))
+        ):
+            raise ValueError("default_agent_name must be a single safe path segment.")
+        self.default_agent_name = normalized_default_agent_name
+
         self.files_dir_name = files_dir_name
         self.attachments_dir_name = attachments_dir_name
         self.plan_file_name = plan_file_name
@@ -77,7 +87,12 @@ class WorkspaceLayoutService:
             (layout.root / name).mkdir(parents=True, exist_ok=True)
         layout.workspaces_root.mkdir(parents=True, exist_ok=True)
 
-        if self.default_agent_source_dir and self.default_agent_source_dir.is_dir():
+        if self.default_agent_source_dir and not self.default_agent_source_dir.is_dir():
+            logger.warning(
+                "Configured default_agent_source_dir is missing or not a directory; seeding skipped: %s",
+                self.default_agent_source_dir,
+            )
+        elif self.default_agent_source_dir:
             target = layout.root / "agents" / self.default_agent_name
             if not target.exists():
                 try:

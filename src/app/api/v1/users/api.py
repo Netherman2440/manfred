@@ -1,5 +1,6 @@
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.users.schema import SessionDetailResponse, UserMeResponse, UserSessionsResponse
 from app.container import Container
@@ -34,8 +35,14 @@ def get_current_user(
                 api_key_hash=None,
                 created_at=utcnow(),
             )
-            user = user_repo.save(user)
-            db_session.commit()
+            try:
+                user = user_repo.save(user)
+                db_session.commit()
+            except IntegrityError:
+                db_session.rollback()
+                user = user_repo.get(settings.DEFAULT_USER_ID)
+                if user is None:
+                    raise
         workspace_layout_service.ensure_user_workspace(user)
         return UserMeResponse(id=user.id, name=user.name)
     finally:

@@ -59,7 +59,12 @@ class AgentLoader:
 
     def load_agent_by_name(self, agent_name: str) -> LoadedAgent:
         normalized_name = agent_name.strip()
-        if not normalized_name:
+        if (
+            not normalized_name
+            or normalized_name in {".", ".."}
+            or Path(normalized_name).name != normalized_name
+            or any(sep in normalized_name for sep in ("/", "\\"))
+        ):
             raise ValueError("agent_name must be a non-empty string")
 
         return self.load_agent(self._agent_path_for_name(normalized_name))

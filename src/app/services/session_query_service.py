@@ -30,71 +30,49 @@ class SessionQueryService:
     def close(self) -> None:
         self.session_repository.session.close()
 
+    def _build_session_list_entry(
+        self,
+        session,
+        *,
+        fallback_root_agent_name: str,
+    ) -> dict[str, Any]:
+        root_agent_id = session.root_agent_id
+        if not root_agent_id:
+            raise SessionQueryIntegrityError(
+                f"Session {session.id} has no root_agent_id.",
+            )
+        root_agent = self.agent_repository.get(root_agent_id)
+        if root_agent is None:
+            raise SessionQueryIntegrityError(
+                f"Session {session.id} references missing root agent {root_agent_id}.",
+            )
+        return {
+            "id": session.id,
+            "user_id": session.user_id,
+            "title": session.title,
+            "status": session.status.value,
+            "root_agent_id": root_agent.id,
+            "root_agent_name": root_agent.agent_name or fallback_root_agent_name,
+            "root_agent_status": root_agent.status.value,
+            "waiting_for_count": len(root_agent.waiting_for),
+            "last_message_preview": self._build_last_message_preview(session.id),
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        }
+
     def list_sessions_by_agent_name(self, user_id: str, agent_name: str) -> list[dict[str, Any]]:
         sessions = self.session_repository.list_by_user_and_agent_name(user_id, agent_name)
-        response: list[dict[str, Any]] = []
-        for session in sessions:
-            root_agent_id = session.root_agent_id
-            if not root_agent_id:
-                raise SessionQueryIntegrityError(
-                    f"Session {session.id} has no root_agent_id.",
-                )
-            root_agent = self.agent_repository.get(root_agent_id)
-            if root_agent is None:
-                raise SessionQueryIntegrityError(
-                    f"Session {session.id} references missing root agent {root_agent_id}.",
-                )
-            response.append(
-                {
-                    "id": session.id,
-                    "user_id": session.user_id,
-                    "title": session.title,
-                    "status": session.status.value,
-                    "root_agent_id": root_agent.id,
-                    "root_agent_name": root_agent.agent_name or agent_name,
-                    "root_agent_status": root_agent.status.value,
-                    "waiting_for_count": len(root_agent.waiting_for),
-                    "last_message_preview": self._build_last_message_preview(session.id),
-                    "created_at": session.created_at,
-                    "updated_at": session.updated_at,
-                }
-            )
-        return response
+        return [
+            self._build_session_list_entry(session, fallback_root_agent_name=agent_name)
+            for session in sessions
+        ]
 
     def list_user_sessions(self, user_id: str) -> list[dict[str, Any]]:
         sessions = self.session_repository.list_by_user(user_id)
-        response: list[dict[str, Any]] = []
-
-        for session in sessions:
-            root_agent_id = session.root_agent_id
-            if not root_agent_id:
-                raise SessionQueryIntegrityError(
-                    f"Session {session.id} has no root_agent_id.",
-                )
-
-            root_agent = self.agent_repository.get(root_agent_id)
-            if root_agent is None:
-                raise SessionQueryIntegrityError(
-                    f"Session {session.id} references missing root agent {root_agent_id}.",
-                )
-
-            response.append(
-                {
-                    "id": session.id,
-                    "user_id": session.user_id,
-                    "title": session.title,
-                    "status": session.status.value,
-                    "root_agent_id": root_agent.id,
-                    "root_agent_name": root_agent.agent_name or "Manfred",
-                    "root_agent_status": root_agent.status.value,
-                    "waiting_for_count": len(root_agent.waiting_for),
-                    "last_message_preview": self._build_last_message_preview(session.id),
-                    "created_at": session.created_at,
-                    "updated_at": session.updated_at,
-                }
-            )
-
-        return response
+        return [
+            self._build_session_list_entry(session, fallback_root_agent_name="Manfred")
+            for session in sessions
+        ]
 
     def get_user_session_detail(self, user_id: str, session_id: str) -> dict[str, Any]:
         session = self.session_repository.get(session_id)

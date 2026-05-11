@@ -39,7 +39,7 @@ Specyfikacja jest self-contained — nie wymaga zaglądania do repo frontendu.
 
 ### Struktura plików
 
-```
+```text
 src/app/services/filesystem/
   base.py            ← NOWY: AbstractFilesystemService
   local_service.py   ← NOWY (z RENAME service.py)

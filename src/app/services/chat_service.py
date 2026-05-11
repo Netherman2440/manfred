@@ -800,6 +800,8 @@ class ChatService:
 
         try:
             loaded_agent = self.agent_loader.load_agent_by_name(agent_name)
+        except ValueError as exc:
+            raise ChatServiceValidationError(str(exc)) from exc
         except FileNotFoundError as exc:
             raise ChatServiceNotFoundError(f"Agent template not found: {agent_name}") from exc
 

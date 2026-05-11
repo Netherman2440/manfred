@@ -49,7 +49,7 @@ class ModelCatalogService:
         if self._cache is not None:
             cached_at, cached_models = self._cache
             if now - cached_at < self._cache_ttl_seconds:
-                return cached_models
+                return list(cached_models)
 
         async with self._lock:
             # Re-check after acquiring lock (another coroutine may have refreshed)
@@ -57,17 +57,17 @@ class ModelCatalogService:
             if self._cache is not None:
                 cached_at, cached_models = self._cache
                 if now - cached_at < self._cache_ttl_seconds:
-                    return cached_models
+                    return list(cached_models)
 
             try:
                 models = await self._fetch_models()
                 self._cache = (time.monotonic(), models)
-                return models
+                return list(models)
             except Exception as exc:
                 logger.warning("Failed to fetch models from OpenRouter: %s", exc)
                 if self._cache is not None:
                     _, stale_models = self._cache
-                    return stale_models
+                    return list(stale_models)
                 raise ModelCatalogUnavailable("Unable to fetch model list from OpenRouter.") from exc
 
     async def _fetch_models(self) -> list[ModelSummary]:

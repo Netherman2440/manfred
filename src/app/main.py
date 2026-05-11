@@ -22,6 +22,7 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI):
         event_bus = container.event_bus()
         mcp_manager = container.mcp_manager()
+        http_client = container.http_client()
         unsubscribe_logger = subscribe_event_logger(event_bus)
         langfuse_subscriber = container.langfuse_subscriber()
         unsubscribe_langfuse = (
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
             yield
         finally:
             await mcp_manager.close()
+            await http_client.aclose()
             unsubscribe_langfuse()
             if langfuse_subscriber is not None:
                 langfuse_subscriber.shutdown()

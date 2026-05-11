@@ -149,7 +149,12 @@ def update_agent(
         tools=request.tools,
         system_prompt=request.system_prompt,
     )
-    logger.debug("update_agent payload=%r", payload)
+    logger.debug(
+        "update_agent payload_meta name=%s model=%s tools_count=%d",
+        payload.name,
+        payload.model,
+        len(payload.tools),
+    )
     try:
         detail = agent_template_service.update_template(user, name, payload)
     except AgentTemplateNotFound as exc:

@@ -127,6 +127,7 @@ class AgentTemplateService:
         return summaries
 
     def get_template(self, user: User, name: str) -> AgentTemplateDetail | None:
+        self._validate_name(name)
         agents_dir = self._agents_dir(user)
         agent_dir = agents_dir / name
         if not agent_dir.exists():
@@ -153,6 +154,7 @@ class AgentTemplateService:
 
     def update_template(self, user: User, name: str, payload: AgentTemplateInput) -> AgentTemplateDetail:
         logger.info("update_template name=%s color=%s model=%s", name, payload.color, payload.model)
+        self._validate_name(name)
         if payload.name != name:
             raise AgentTemplateInvalid("name", "Rename not supported — name must match URL path parameter.")
 
@@ -177,6 +179,7 @@ class AgentTemplateService:
         return self._to_detail(template)
 
     def delete_template(self, user: User, name: str) -> None:
+        self._validate_name(name)
         agents_dir = self._agents_dir(user)
         agent_dir = agents_dir / name
         if not agent_dir.exists():
@@ -206,14 +209,17 @@ class AgentTemplateService:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _validate_payload(self, payload: AgentTemplateInput) -> None:
-        if not self.NAME_PATTERN.match(payload.name):
+    def _validate_name(self, name: str) -> None:
+        if not self.NAME_PATTERN.match(name):
             raise AgentTemplateInvalid(
                 "name",
                 "Name must match ^[a-z][a-z0-9_-]{0,47}$ (lowercase, starts with letter, max 48 chars).",
             )
-        if payload.name in self.RESERVED_NAMES:
-            raise AgentTemplateInvalid("name", f"Name '{payload.name}' is reserved.")
+        if name in self.RESERVED_NAMES:
+            raise AgentTemplateInvalid("name", f"Name '{name}' is reserved.")
+
+    def _validate_payload(self, payload: AgentTemplateInput) -> None:
+        self._validate_name(payload.name)
 
         if payload.color is not None and not _COLOR_PATTERN.match(payload.color):
             raise AgentTemplateInvalid("color", "Color must be #RRGGBB hex string or null.")
@@ -240,7 +246,13 @@ class AgentTemplateService:
         content = render_agent_frontmatter(template) + payload.system_prompt
 
         target_file = agent_dir / f"{payload.name}{AGENT_EXTENSION}"
-        logger.debug("_write_agent_file target=%s atomic=%s color=%s content_head=%r", target_file, atomic, payload.color, content[:120])
+        logger.debug(
+            "_write_agent_file target=%s atomic=%s color=%s prompt_len=%d",
+            target_file,
+            atomic,
+            payload.color,
+            len(payload.system_prompt),
+        )
         if atomic:
             tmp_file = target_file.with_suffix(".tmp")
             tmp_file.write_text(content, encoding="utf-8")
