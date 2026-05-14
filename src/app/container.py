@@ -36,12 +36,9 @@ from app.services.filesystem import (
 )
 from app.services.model_catalog_service import ModelCatalogService
 from app.services.session_query_service import SessionQueryService
-from app.services.tiktokenizer_service import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
 from app.tools.definitions.aidevs import (
-    build_count_tokens_tool,
     build_fetch_aidevs_data_tool,
-    build_fetch_log_tool,
     build_submit_task_tool,
 )
 from app.tools.definitions.ask_user import ask_user_tool
@@ -116,7 +113,6 @@ def build_workspace_layout_service(
 def get_tools(
     filesystem_service: AgentFilesystemService,
     settings: Settings,
-    tiktokenizer_service: TiktokenizerService,
 ) -> list[Tool]:
     return [
         calculator_tool,
@@ -128,8 +124,6 @@ def get_tools(
         build_manage_file_tool(filesystem_service),
         build_submit_task_tool(settings),
         build_fetch_aidevs_data_tool(settings),
-        build_fetch_log_tool(settings),
-        build_count_tokens_tool(tiktokenizer_service, filesystem_service),
     ]
 
 
@@ -321,14 +315,12 @@ class Container(containers.DeclarativeContainer):
         repo_root=repo_root,
         workspace_layout_service=workspace_layout_service,
     )
-    tiktokenizer_service = providers.Singleton(TiktokenizerService)
     tool_registry = providers.Singleton(
         ToolRegistry,
         tools=providers.Callable(
             get_tools,
             filesystem_service=filesystem_service,
             settings=settings,
-            tiktokenizer_service=tiktokenizer_service,
         ),
     )
     event_bus = providers.Singleton(EventBus)
