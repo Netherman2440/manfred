@@ -12,11 +12,11 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.api.v1.chat.schema import (
     ChatAgentConfigInput,
-    ChatRequest,
-    ChatResponse,
     ChatEditRequest,
     ChatQueueRequest,
     ChatQueueResponse,
+    ChatRequest,
+    ChatResponse,
     ChatStreamSessionEvent,
     DeliverRequest,
     FunctionCallOutputItem,
@@ -53,6 +53,7 @@ from app.domain.repositories import (
     SessionRepository,
     UserRepository,
 )
+from app.providers import ProviderErrorEvent, ProviderStreamEvent
 from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, CancellationSignal
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
@@ -60,7 +61,6 @@ from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment, StoredAttachment
 from app.services.filesystem import WorkspaceLayoutService
-from app.providers import ProviderErrorEvent, ProviderStreamEvent
 
 
 class ChatServiceValidationError(ValueError):
@@ -411,12 +411,17 @@ class ChatService:
     ) -> tuple[PreparedChatSetupResult, list[Path]]:
         created_files: list[Path] = []
         try:
-            user = self._ensure_default_user() #TODO: Get real user
+            user = self._ensure_default_user()  # TODO: Get real user
             session = self._load_session(chat_request.session_id, user)
             self._validate_session_accepts_new_run(session)
             resolved_config = self._resolve_agent_config(chat_request.agent_config)
             trace_id = uuid4().hex
-            agent = self._resolve_session_root_agent(session, resolved_config, trace_id=trace_id)
+            agent = self._resolve_session_root_agent(
+                session,
+                resolved_config,
+                trace_id=trace_id,
+                has_explicit_config=chat_request.agent_config is not None,
+            )
             last_sequence = self.item_repository.get_last_sequence(agent.id)
             existing_session_item_ids = {item.id for item in self.item_repository.list_by_session(session.id)}
             stored_attachments, created_files = self._store_request_attachments(
@@ -783,6 +788,10 @@ class ChatService:
             layout = self.workspace_layout_service.ensure_session_workspace(user=user, session=saved_session)
             saved_session.workspace_path = str(layout.root)
             self.session_repository.save(saved_session)
+            # Commit immediately so that other DB connections (e.g. markdown event
+            # logger's resolver) can see the new session and its workspace_path
+            # while events are still being emitted during this request.
+            self.session.commit()
             return saved_session
 
         session = self.session_repository.get(session_id)
@@ -820,7 +829,9 @@ class ChatService:
             model=request_config.model or base_config.model,
             task=request_config.task or base_config.task,
             tools=self._resolve_tools(request_config.tools) if request_config.tools is not None else base_config.tools,
-            temperature=request_config.temperature if request_config.temperature is not None else base_config.temperature,
+            temperature=request_config.temperature
+            if request_config.temperature is not None
+            else base_config.temperature,
         )
 
     def _resolve_tools(
@@ -844,13 +855,14 @@ class ChatService:
 
         return resolved
 
-    def _resolve_session_root_agent(self, session: Session, config: ResolvedAgentConfig, *, trace_id: str) -> Agent:
-        agent_config = AgentConfig(
-            model=config.model,
-            task=config.task,
-            tools=config.tools,
-            temperature=config.temperature,
-        )
+    def _resolve_session_root_agent(
+        self,
+        session: Session,
+        config: ResolvedAgentConfig,
+        *,
+        trace_id: str,
+        has_explicit_config: bool,
+    ) -> Agent:
         now = utcnow()
 
         if session.root_agent_id is not None:
@@ -858,13 +870,28 @@ class ChatService:
             if agent is None:
                 raise RuntimeError(f"Session integrity error: root agent not found: {session.root_agent_id}")
 
-            agent.agent_name = config.agent_name
+            # Only rewrite identity/config when the caller explicitly supplied a new agent_config.
+            # Otherwise the next turn would overwrite the session's root agent with DEFAULT_AGENT.
+            if has_explicit_config:
+                agent.agent_name = config.agent_name
+                agent.config = AgentConfig(
+                    model=config.model,
+                    task=config.task,
+                    tools=config.tools,
+                    temperature=config.temperature,
+                )
             agent.trace_id = trace_id
-            agent.config = agent_config
             agent.status = AgentStatus.PENDING
             agent.waiting_for = []
             agent.updated_at = now
             return self.agent_repository.save(agent)
+
+        agent_config = AgentConfig(
+            model=config.model,
+            task=config.task,
+            tools=config.tools,
+            temperature=config.temperature,
+        )
 
         agent_id = uuid4().hex
         agent = Agent(

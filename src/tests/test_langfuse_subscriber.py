@@ -2,8 +2,8 @@ import logging
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
 
-from app.db.base import utcnow
 from app.config import Settings
+from app.db.base import utcnow
 from app.domain import Agent, AgentConfig, AgentStatus
 from app.events import (
     AgentCompletedEvent,
@@ -259,6 +259,8 @@ def test_langfuse_subscriber_nests_child_agent_under_parent_observation() -> Non
         "trace_id": "trace-1",
         "parent_span_id": "obs-parent",
     }
+
+
 def _record_trace_attributes(
     storage: list[dict[str, str | None]],
     **kwargs: str | None,

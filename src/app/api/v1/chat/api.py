@@ -1,6 +1,6 @@
-from dependency_injector.wiring import Provide, inject
 import json
 
+from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from starlette.datastructures import FormData, UploadFile
@@ -22,7 +22,6 @@ from app.providers import ProviderStreamEvent, serialize_provider_stream_event
 from app.services.chat_attachments import IncomingAttachment
 from app.services.chat_service import ChatService, ChatServiceNotFoundError, ChatServiceValidationError
 
-
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
@@ -39,6 +38,7 @@ async def chat(
         chat_service.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if payload.stream:
+
         async def stream() -> object:
             try:
                 async for event in chat_service.process_chat_stream(payload, attachments=attachments):
@@ -78,6 +78,7 @@ async def edit_message(
         chat_service.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if payload.stream:
+
         async def stream() -> object:
             try:
                 async for event in chat_service.process_edit_stream(
@@ -249,7 +250,9 @@ async def _parse_edit_request(request: Request, max_file_size: int) -> tuple[Cha
     return ChatEditRequest.model_validate(body), []
 
 
-async def _parse_queue_request(request: Request, max_file_size: int) -> tuple[ChatQueueRequest, list[IncomingAttachment]]:
+async def _parse_queue_request(
+    request: Request, max_file_size: int
+) -> tuple[ChatQueueRequest, list[IncomingAttachment]]:
     if _is_multipart_request(request):
         form = await request.form()
         return (

@@ -9,7 +9,7 @@ from app.domain.waiting import WaitingForEntry
 @dataclass(slots=True, frozen=True)
 class AgentConfig:
     model: str
-    task: str #system_prompt
+    task: str  # system_prompt
     tools: list[ToolDefinition] | None
     temperature: float | None
 

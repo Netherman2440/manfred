@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 from dependency_injector import containers, providers
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -16,28 +17,33 @@ from app.domain.repositories import (
     UserRepository,
 )
 from app.events import EventBus
-from app.services.filesystem import (
-    AgentFilesystemService,
-    FilesystemPathResolver,
-    WorkspaceScopedFilesystemPolicy,
-    WorkspaceLayoutService,
-    build_mounts,
-)
 from app.mcp import StdioMcpManager
-from app.observability import build_langfuse_subscriber
+from app.observability import MarkdownEventLogger, build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
 from app.runtime.cancellation import ActiveRunRegistry
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
-import httpx
-
 from app.services.agent_loader import AgentLoader
 from app.services.agent_template_service import AgentTemplateService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
+from app.services.filesystem import (
+    AgentFilesystemService,
+    FilesystemPathResolver,
+    WorkspaceLayoutService,
+    WorkspaceScopedFilesystemPolicy,
+    build_mounts,
+)
 from app.services.model_catalog_service import ModelCatalogService
 from app.services.session_query_service import SessionQueryService
+from app.services.tiktokenizer_service import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
+from app.tools.definitions.aidevs import (
+    build_count_tokens_tool,
+    build_fetch_aidevs_data_tool,
+    build_fetch_log_tool,
+    build_submit_task_tool,
+)
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
 from app.tools.definitions.delegate import delegate_tool
@@ -107,7 +113,11 @@ def build_workspace_layout_service(
     )
 
 
-def get_tools(filesystem_service: AgentFilesystemService) -> list[Tool]:
+def get_tools(
+    filesystem_service: AgentFilesystemService,
+    settings: Settings,
+    tiktokenizer_service: TiktokenizerService,
+) -> list[Tool]:
     return [
         calculator_tool,
         delegate_tool,
@@ -116,6 +126,10 @@ def get_tools(filesystem_service: AgentFilesystemService) -> list[Tool]:
         build_search_file_tool(filesystem_service),
         build_write_file_tool(filesystem_service),
         build_manage_file_tool(filesystem_service),
+        build_submit_task_tool(settings),
+        build_fetch_aidevs_data_tool(settings),
+        build_fetch_log_tool(settings),
+        build_count_tokens_tool(tiktokenizer_service, filesystem_service),
     ]
 
 
@@ -132,6 +146,7 @@ def _build_agent_loader_workspace_path(*, settings: Settings, repo_root: Path) -
     Since this is a single-user app, compute user workspace key from default user settings.
     """
     from app.services.filesystem import WorkspaceLayoutService as _WLS  # local import to avoid circular
+
     wls = _WLS(repo_root=repo_root, workspace_path=settings.WORKSPACE_PATH)
     workspace_key = wls.resolve_user_workspace_key(
         user_id=settings.DEFAULT_USER_ID,
@@ -186,6 +201,7 @@ def build_runner(
         event_bus=event_bus,
         agent_loader=agent_loader,
         max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
+        max_turns=settings.MAX_TURNS,
         message_queue=message_queue,
         filesystem_service=filesystem_service,
     )
@@ -250,6 +266,20 @@ def build_session_query_service(*, session: Session) -> SessionQueryService:
     )
 
 
+def build_markdown_event_logger(*, session_factory: Callable[[], Session]) -> MarkdownEventLogger:
+    def resolver(session_id: str) -> Path | None:
+        sa_session = session_factory()
+        try:
+            session = SessionRepository(sa_session).get(session_id)
+            if session is None or not session.workspace_path:
+                return None
+            return Path(session.workspace_path)
+        finally:
+            sa_session.close()
+
+    return MarkdownEventLogger(workspace_resolver=resolver)
+
+
 class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
         packages=[
@@ -291,14 +321,24 @@ class Container(containers.DeclarativeContainer):
         repo_root=repo_root,
         workspace_layout_service=workspace_layout_service,
     )
+    tiktokenizer_service = providers.Singleton(TiktokenizerService)
     tool_registry = providers.Singleton(
         ToolRegistry,
-        tools=providers.Callable(get_tools, filesystem_service=filesystem_service),
+        tools=providers.Callable(
+            get_tools,
+            filesystem_service=filesystem_service,
+            settings=settings,
+            tiktokenizer_service=tiktokenizer_service,
+        ),
     )
     event_bus = providers.Singleton(EventBus)
     langfuse_subscriber = providers.Singleton(
         build_langfuse_subscriber,
         settings=settings,
+    )
+    markdown_event_logger = providers.Singleton(
+        build_markdown_event_logger,
+        session_factory=session_factory,
     )
     active_run_registry = providers.Singleton(ActiveRunRegistry)
 

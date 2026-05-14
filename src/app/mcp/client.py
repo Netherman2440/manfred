@@ -203,7 +203,7 @@ class _StdioMcpSession:
             process.terminate()
             try:
                 await asyncio.wait_for(process.wait(), timeout=_TERMINATION_TIMEOUT_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 await process.wait()
         else:
@@ -287,11 +287,9 @@ class _StdioMcpSession:
 
         try:
             message = await asyncio.wait_for(future, timeout=self.request_timeout_seconds)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             self._pending.pop(request_id, None)
-            raise McpClientError(
-                f"MCP server '{self.server_name}' timed out for method '{method}'."
-            ) from exc
+            raise McpClientError(f"MCP server '{self.server_name}' timed out for method '{method}'.") from exc
         except BaseException:
             self._pending.pop(request_id, None)
             raise
@@ -305,9 +303,7 @@ class _StdioMcpSession:
 
         result = message.get("result")
         if not isinstance(result, dict):
-            raise McpClientError(
-                f"MCP server '{self.server_name}' returned invalid result for method '{method}'."
-            )
+            raise McpClientError(f"MCP server '{self.server_name}' returned invalid result for method '{method}'.")
         return result
 
     async def _notify(self, method: str, params: dict[str, Any]) -> None:
@@ -414,10 +410,7 @@ class StdioMcpManager:
             return
 
         self._config = load_mcp_config(self.config_path)
-        self._statuses = {
-            server_name: "disconnected"
-            for server_name in self._config.mcp_servers
-        }
+        self._statuses = {server_name: "disconnected" for server_name in self._config.mcp_servers}
         logger.info(
             "mcp start config_path=%s servers=%s",
             self.config_path,
@@ -459,10 +452,7 @@ class StdioMcpManager:
         self._sessions = {}
         self._tools_by_name = {}
         if self._config is not None:
-            self._statuses = {
-                server_name: "disconnected"
-                for server_name in self._config.mcp_servers
-            }
+            self._statuses = {server_name: "disconnected" for server_name in self._config.mcp_servers}
         self._started = False
 
         for server_name, session in sessions:
@@ -487,11 +477,7 @@ class StdioMcpManager:
         return sorted(self._tools_by_name.values(), key=lambda tool: tool.prefixed_name)
 
     def list_server_tools(self, server_name: str) -> list[McpToolInfo]:
-        return [
-            tool
-            for tool in self.list_tools()
-            if tool.server == server_name
-        ]
+        return [tool for tool in self.list_tools() if tool.server == server_name]
 
     def get_tool(self, prefixed_name: str) -> McpToolInfo | None:
         return self._tools_by_name.get(prefixed_name)

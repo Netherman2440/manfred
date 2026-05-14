@@ -4,11 +4,6 @@ from app.services.filesystem.policy import (
     WorkspaceScopedFilesystemPolicy,
 )
 from app.services.filesystem.service import AgentFilesystemService
-from app.services.filesystem.workspace_layout import (
-    SessionWorkspaceLayout,
-    UserWorkspaceLayout,
-    WorkspaceLayoutService,
-)
 from app.services.filesystem.types import (
     FilesystemAccessDecision,
     FilesystemAccessRequest,
@@ -19,6 +14,11 @@ from app.services.filesystem.types import (
     FilesystemSubject,
     FilesystemToolError,
     FilesystemWriteRequest,
+)
+from app.services.filesystem.workspace_layout import (
+    SessionWorkspaceLayout,
+    UserWorkspaceLayout,
+    WorkspaceLayoutService,
 )
 
 __all__ = [

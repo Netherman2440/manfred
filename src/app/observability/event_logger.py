@@ -8,9 +8,9 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from app.events import (
-    AgentResumedEvent,
     AgentCompletedEvent,
     AgentFailedEvent,
+    AgentResumedEvent,
     AgentStartedEvent,
     AgentWaitingEvent,
     EventBus,

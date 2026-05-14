@@ -1,7 +1,7 @@
 from app.events.definitions.agent_cancelled import AgentCancelledEvent
-from app.events.definitions.agent_resumed import AgentResumedEvent
 from app.events.definitions.agent_completed import AgentCompletedEvent
 from app.events.definitions.agent_failed import AgentFailedEvent
+from app.events.definitions.agent_resumed import AgentResumedEvent
 from app.events.definitions.agent_started import AgentStartedEvent
 from app.events.definitions.agent_waiting import AgentWaitingEvent
 from app.events.definitions.base import BaseEvent, EventContext, build_event_context

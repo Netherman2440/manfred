@@ -62,17 +62,11 @@ class SessionQueryService:
 
     def list_sessions_by_agent_name(self, user_id: str, agent_name: str) -> list[dict[str, Any]]:
         sessions = self.session_repository.list_by_user_and_agent_name(user_id, agent_name)
-        return [
-            self._build_session_list_entry(session, fallback_root_agent_name=agent_name)
-            for session in sessions
-        ]
+        return [self._build_session_list_entry(session, fallback_root_agent_name=agent_name) for session in sessions]
 
     def list_user_sessions(self, user_id: str) -> list[dict[str, Any]]:
         sessions = self.session_repository.list_by_user(user_id)
-        return [
-            self._build_session_list_entry(session, fallback_root_agent_name="Manfred")
-            for session in sessions
-        ]
+        return [self._build_session_list_entry(session, fallback_root_agent_name="Manfred") for session in sessions]
 
     def get_user_session_detail(self, user_id: str, session_id: str) -> dict[str, Any]:
         session = self.session_repository.get(session_id)

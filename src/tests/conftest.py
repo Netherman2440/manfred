@@ -5,8 +5,8 @@ import pytest
 from app.services.filesystem import (
     AgentFilesystemService,
     FilesystemPathResolver,
-    WorkspaceScopedFilesystemPolicy,
     WorkspaceLayoutService,
+    WorkspaceScopedFilesystemPolicy,
     build_mounts,
 )
 

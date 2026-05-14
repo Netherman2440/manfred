@@ -1,9 +1,9 @@
 from app.events.definitions import (
     AgentCancelledEvent,
-    AgentResumedEvent,
     AgentCompletedEvent,
     AgentEvent,
     AgentFailedEvent,
+    AgentResumedEvent,
     AgentStartedEvent,
     AgentWaitingEvent,
     BaseEvent,

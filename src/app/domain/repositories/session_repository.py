@@ -18,9 +18,7 @@ class SessionRepository:
 
     def list_by_user(self, user_id: str) -> list[Session]:
         models = self.session.scalars(
-            select(SessionModel)
-            .where(SessionModel.user_id == user_id)
-            .order_by(SessionModel.updated_at.desc())
+            select(SessionModel).where(SessionModel.user_id == user_id).order_by(SessionModel.updated_at.desc())
         ).all()
         return [self._to_domain(model) for model in models]
 

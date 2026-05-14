@@ -230,9 +230,13 @@ def test_list_user_sessions_returns_items_sorted_by_updated_at_desc(
     api_client: tuple[TestClient, sessionmaker],
 ) -> None:
     client, test_session_factory = api_client
-    _seed_session_graph(test_session_factory, session_id="session-new", user_id="default-user", updated_at_offset_seconds=0)
+    _seed_session_graph(
+        test_session_factory, session_id="session-new", user_id="default-user", updated_at_offset_seconds=0
+    )
     _seed_session_items(test_session_factory, session_id="session-new")
-    _seed_session_graph(test_session_factory, session_id="session-old", user_id="default-user", updated_at_offset_seconds=5)
+    _seed_session_graph(
+        test_session_factory, session_id="session-old", user_id="default-user", updated_at_offset_seconds=5
+    )
 
     response = client.get("/api/v1/users/default-user/sessions")
 
@@ -499,9 +503,7 @@ def test_create_app_configures_cors_for_dynamic_localhost_ports() -> None:
     finally:
         container.settings.reset_override()
 
-    cors_middleware = next(
-        middleware for middleware in app.user_middleware if middleware.cls is CORSMiddleware
-    )
+    cors_middleware = next(middleware for middleware in app.user_middleware if middleware.cls is CORSMiddleware)
 
     assert cors_middleware.kwargs["allow_origins"] == ["http://localhost:3001"]
     assert cors_middleware.kwargs["allow_origin_regex"] == LOCALHOST_CORS_ORIGIN_REGEX

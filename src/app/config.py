@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     MCP_CONFIG_PATH: str = ".mcp.json"
     MCP_TOOL_TIMEOUT_MS: int = 30000
     MAX_DELEGATION_DEPTH: int = 8
+    MAX_TURNS: int = 50
 
     OPEN_ROUTER_URL: str = "https://openrouter.ai/api/v1"
     OPEN_ROUTER_API_KEY: str = ""
@@ -39,11 +40,11 @@ class Settings(BaseSettings):
     DEFAULT_USER_ID: str = "default-user"
     DEFAULT_USER_NAME: str = "Default User"
 
-    #gemini? TODO
+    # gemini? TODO
 
-    #openai TODO
-    
-    LANGFUSE_ENABLED: bool = True
+    # openai TODO
+
+    LANGFUSE_ENABLED: bool = False
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"

@@ -8,7 +8,6 @@ from app.domain import FunctionToolDefinition, ToolDefinition, WebSearchToolDefi
 from app.mcp import McpManager, parse_mcp_tool_name
 from app.tools.registry import ToolRegistry
 
-
 AGENT_EXTENSION = ".agent.md"
 logger = logging.getLogger("app.services.agent_loader")
 
@@ -123,9 +122,7 @@ class AgentLoader:
     def resolve_tool_definitions(self, tool_names: list[str]) -> list[ToolDefinition]:
         resolved: list[ToolDefinition] = []
         registered_tools = {
-            tool.name: tool
-            for tool in self.tool_registry.list()
-            if isinstance(tool, FunctionToolDefinition)
+            tool.name: tool for tool in self.tool_registry.list() if isinstance(tool, FunctionToolDefinition)
         }
 
         for tool_name in tool_names:
@@ -241,8 +238,8 @@ def render_agent_frontmatter(template: AgentTemplate) -> str:
     """
 
     def _quote_if_needed(value: str) -> str:
-        if any(ch in value for ch in (':', '#', '"', "'", '\n', '\r', '\\')):
-            escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        if any(ch in value for ch in (":", "#", '"', "'", "\n", "\r", "\\")):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
             return f'"{escaped}"'
         return value
 

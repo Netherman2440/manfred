@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Exceptions
 # ---------------------------------------------------------------------------
 
+
 class AgentTemplateError(Exception):
     pass
 
@@ -44,6 +45,7 @@ class AgentTemplateInvalid(AgentTemplateError):
 # ---------------------------------------------------------------------------
 # DTOs
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class AgentTemplateSummary:
@@ -190,10 +192,7 @@ class AgentTemplateService:
         # but can be cleaned up manually without data loss.
         try:
             user_session_ids = [
-                row.id
-                for row in self.db_session.query(SessionModel.id)
-                .filter(SessionModel.user_id == user.id)
-                .all()
+                row.id for row in self.db_session.query(SessionModel.id).filter(SessionModel.user_id == user.id).all()
             ]
             self.db_session.query(AgentModel).filter(
                 AgentModel.agent_name == name,

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from app.db.base import utcnow
 from app.domain import Agent, Item, QueuedInput
 from app.domain.repositories import ItemRepository, QueuedInputRepository
-from collections.abc import Callable
 
 
 class SessionMessageQueue:
@@ -21,8 +22,6 @@ class SessionMessageQueue:
 
     def pending_count(self, session_id: str, agent_id: str) -> int:
         return self.queued_input_repository.get_pending_count(session_id, agent_id)
-
-
 
     def consume_into_items(
         self,

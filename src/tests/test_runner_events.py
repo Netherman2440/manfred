@@ -15,13 +15,21 @@ from app.domain import (
     Item,
     ItemType,
     MessageRole,
-    Session as DomainSession,
     SessionStatus,
     Tool,
     ToolExecutionContext,
     User,
 )
-from app.domain.repositories import AgentRepository, ItemRepository, QueuedInputRepository, SessionRepository, UserRepository
+from app.domain import (
+    Session as DomainSession,
+)
+from app.domain.repositories import (
+    AgentRepository,
+    ItemRepository,
+    QueuedInputRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.events import EventBus
 from app.mcp import McpToolInfo
 from app.providers import (
@@ -275,6 +283,7 @@ def make_runner(
         event_bus=event_bus,
         agent_loader=agent_loader or FakeAgentLoader(),
         max_delegation_depth=8,
+        max_turns=10,
         message_queue=SessionMessageQueue(
             queued_input_repository=QueuedInputRepository(db_session),
             item_repository=item_repository,
@@ -307,6 +316,7 @@ async def test_runner_emits_happy_path_events_in_order(db_session: Session) -> N
         "turn.completed",
         "agent.completed",
     ]
+
 
 @pytest.mark.asyncio
 async def test_runner_emits_tool_failed_and_continues(db_session: Session) -> None:

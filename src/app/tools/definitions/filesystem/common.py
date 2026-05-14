@@ -7,7 +7,6 @@ from typing import Any
 from app.domain import ToolExecutionContext
 from app.services.filesystem import FilesystemSubject, FilesystemToolError
 
-
 FilesystemAction = Callable[[FilesystemSubject, str], Awaitable[dict[str, Any]]]
 
 

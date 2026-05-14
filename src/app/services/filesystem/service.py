@@ -17,11 +17,11 @@ from app.services.filesystem.types import (
     FilesystemManageRequest,
     FilesystemReadRequest,
     FilesystemSearchRequest,
+    FilesystemSubject,
     FilesystemToolError,
     FilesystemWriteRequest,
     ResolvedFilesystemPath,
 )
-
 
 DEFAULT_IGNORED_NAMES = {
     ".git",
@@ -72,9 +72,9 @@ class AgentFilesystemService:
         mounts_block = "\n".join(mount_lines)
         return (
             "<filesystem>\n"
-            "Your file tools operate on a sandboxed filesystem. All paths are relative — never use a leading \"/\".\n"
+            'Your file tools operate on a sandboxed filesystem. All paths are relative — never use a leading "/".\n'
             "\n"
-            "Available mounts (use fs_read(\".\") to list them):\n"
+            'Available mounts (use fs_read(".") to list them):\n'
             f"{mounts_block}\n"
             "\n"
             "Rules:\n"
@@ -547,9 +547,7 @@ class AgentFilesystemService:
 
             if request.respect_ignore:
                 dirnames[:] = [name for name in dirnames if not self._is_ignored(self._join_rel(relative_dir, name))]
-                filenames = [
-                    name for name in filenames if not self._is_ignored(self._join_rel(relative_dir, name))
-                ]
+                filenames = [name for name in filenames if not self._is_ignored(self._join_rel(relative_dir, name))]
 
             dirnames[:] = [
                 name
@@ -759,9 +757,7 @@ class AgentFilesystemService:
 
         if effective_path.is_dir():
             if not recursive:
-                raise FilesystemToolError(
-                    f"Directory delete requires recursive=true for '{requested_path}'."
-                )
+                raise FilesystemToolError(f"Directory delete requires recursive=true for '{requested_path}'.")
             shutil.rmtree(effective_path)
         else:
             effective_path.unlink()
@@ -808,9 +804,7 @@ class AgentFilesystemService:
         target_effective_path.parent.mkdir(parents=True, exist_ok=True)
         if source_path.is_dir():
             if not recursive:
-                raise FilesystemToolError(
-                    f"Directory copy requires recursive=true for '{requested_path}'."
-                )
+                raise FilesystemToolError(f"Directory copy requires recursive=true for '{requested_path}'.")
             shutil.copytree(source_path, target_effective_path)
         else:
             shutil.copy2(source_path, target_effective_path)
@@ -1042,11 +1036,7 @@ class AgentFilesystemService:
             selected = list(enumerate(source_lines, start=1))
         else:
             start, end = selected_range
-            selected = [
-                (index, line)
-                for index, line in enumerate(source_lines, start=1)
-                if start <= index <= end
-            ]
+            selected = [(index, line) for index, line in enumerate(source_lines, start=1) if start <= index <= end]
 
         if offset > 0:
             selected = selected[offset:]

@@ -5,7 +5,6 @@ from typing import Literal
 
 from app.domain import Agent
 
-
 RunStatus = Literal["completed", "waiting", "failed", "cancelled"]
 
 

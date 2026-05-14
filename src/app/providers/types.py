@@ -32,11 +32,7 @@ class ProviderFunctionCallOutputInputItem:
     type: str = "function_call_output"
 
 
-ProviderInputItem = (
-    ProviderMessageInputItem
-    | ProviderFunctionCallInputItem
-    | ProviderFunctionCallOutputInputItem
-)
+ProviderInputItem = ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem
 
 
 @dataclass(slots=True, frozen=True)

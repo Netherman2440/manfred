@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from app.domain.tool import FunctionToolDefinition, Tool, ToolExecutionContext
 
-
 Operation = Literal["add", "subtract", "multiply", "divide"]
 SUPPORTED_OPERATIONS: tuple[Operation, ...] = ("add", "subtract", "multiply", "divide")
 

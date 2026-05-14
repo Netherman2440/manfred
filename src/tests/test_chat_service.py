@@ -18,12 +18,20 @@ from app.domain import (
     MessageRole,
     QueuedInput,
     QueuedInputAttachment,
-    Session as DomainSession,
     SessionStatus,
     User,
     WaitingForEntry,
 )
-from app.domain.repositories import AgentRepository, ItemRepository, QueuedInputRepository, SessionRepository, UserRepository
+from app.domain import (
+    Session as DomainSession,
+)
+from app.domain.repositories import (
+    AgentRepository,
+    ItemRepository,
+    QueuedInputRepository,
+    SessionRepository,
+    UserRepository,
+)
 from app.events import EventBus
 from app.providers import (
     ProviderFunctionCallOutputItem,
@@ -37,7 +45,7 @@ from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment
-from app.services.chat_service import ChatService, ChatServiceValidationError
+from app.services.chat_service import ChatService, ChatServiceValidationError, ResolvedAgentConfig
 from app.services.filesystem import WorkspaceLayoutService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
@@ -303,6 +311,7 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
         event_bus=EventBus(),
         agent_loader=agent_loader,
         max_delegation_depth=8,
+        max_turns=10,
         message_queue=SessionMessageQueue(
             queued_input_repository=QueuedInputRepository(db_session),
             item_repository=item_repository,
@@ -496,6 +505,127 @@ def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Pat
         chat_service._load_session("foreign-session", user)
 
 
+def test_resolve_session_root_agent_preserves_existing_identity_without_explicit_config(
+    db_session: Session,
+    tmp_path: Path,
+) -> None:
+    user_repository = UserRepository(db_session)
+    session_repository = SessionRepository(db_session)
+    agent_repository = AgentRepository(db_session)
+    item_repository = ItemRepository(db_session)
+    workspace_layout_service = WorkspaceLayoutService(
+        repo_root=tmp_path,
+        workspace_path=".agent_data",
+    )
+    chat_service = ChatService(
+        session=db_session,
+        settings=Settings(
+            _env_file=None,
+            DEFAULT_AGENT="manfred",
+            OPEN_ROUTER_LLM_MODEL="test-model",
+            DEFAULT_USER_ID="default-user",
+            DEFAULT_USER_NAME="Default User",
+            LANGFUSE_ENABLED=False,
+        ),
+        agent_loader=FakeAgentLoader(
+            root_agent=LoadedAgent(
+                agent_name="manfred",
+                model="openrouter:test-model",
+                tools=[],
+                system_prompt="Pomagaj uzytkownikowi.",
+            )
+        ),
+        user_repository=user_repository,
+        session_repository=session_repository,
+        agent_repository=agent_repository,
+        item_repository=item_repository,
+        queued_input_repository=QueuedInputRepository(db_session),
+        runner=object(),  # type: ignore[arg-type]
+        active_run_registry=ActiveRunRegistry(),
+        workspace_layout_service=workspace_layout_service,
+        attachment_storage_service=ChatAttachmentStorageService(
+            workspace_layout_service=workspace_layout_service,
+            max_file_size=1024 * 1024,
+        ),
+        message_queue=SessionMessageQueue(
+            queued_input_repository=QueuedInputRepository(db_session),
+            item_repository=item_repository,
+        ),
+    )
+
+    now = utcnow()
+    user_repository.save(User(id="default-user", name="Default User", api_key_hash=None, created_at=now))
+    session_repository.save(
+        DomainSession(
+            id="azazel-session",
+            user_id="default-user",
+            root_agent_id="azazel-agent",
+            status=SessionStatus.ACTIVE,
+            title=None,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    azazel_config = AgentConfig(
+        model="openrouter:azazel-model",
+        task="Jestes Azazelem.",
+        tools=[ask_user_tool.definition],
+        temperature=0.2,
+    )
+    agent_repository.save(
+        Agent(
+            id="azazel-agent",
+            session_id="azazel-session",
+            trace_id="trace-azazel",
+            root_agent_id="azazel-agent",
+            parent_id=None,
+            source_call_id=None,
+            depth=0,
+            agent_name="azazel",
+            status=AgentStatus.COMPLETED,
+            turn_count=3,
+            waiting_for=[],
+            config=azazel_config,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    session = session_repository.get("azazel-session")
+    assert session is not None
+
+    # Request without explicit agent_config — config will default to DEFAULT_AGENT ("manfred").
+    default_config = ResolvedAgentConfig(
+        agent_name="manfred",
+        model="openrouter:test-model",
+        task="Pomagaj uzytkownikowi.",
+        tools=[],
+        temperature=None,
+    )
+
+    resolved = chat_service._resolve_session_root_agent(
+        session,
+        default_config,
+        trace_id="trace-new",
+        has_explicit_config=False,
+    )
+
+    assert resolved.agent_name == "azazel"
+    assert resolved.config == azazel_config
+    assert resolved.trace_id == "trace-new"
+    assert resolved.status == AgentStatus.PENDING
+
+    # Sanity check: when the caller explicitly supplies a config, the identity is rewritten.
+    rewritten = chat_service._resolve_session_root_agent(
+        session,
+        default_config,
+        trace_id="trace-rewrite",
+        has_explicit_config=True,
+    )
+    assert rewritten.agent_name == "manfred"
+    assert rewritten.config.model == "openrouter:test-model"
+
+
 @pytest.mark.asyncio
 async def test_process_chat_persists_attachments_and_maps_them_to_provider_input(
     db_session: Session,
@@ -531,6 +661,7 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
             )
         ),
         max_delegation_depth=8,
+        max_turns=10,
         message_queue=SessionMessageQueue(
             queued_input_repository=queued_input_repository,
             item_repository=item_repository,
@@ -590,10 +721,13 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
     assert len(user_item.attachments) == 1
     assert user_item.attachments[0].file_name == "notes.txt"
     assert user_item.attachments[0].path == "workspace/attachments/notes.txt"
-    assert (workspace_layout_service.ensure_session_workspace(
-        user=chat_service._ensure_default_user(),
-        session=session_repository.get(response.session_id),
-    ).attachments_dir / "notes.txt").is_file()
+    assert (
+        workspace_layout_service.ensure_session_workspace(
+            user=chat_service._ensure_default_user(),
+            session=session_repository.get(response.session_id),
+        ).attachments_dir
+        / "notes.txt"
+    ).is_file()
     assert len(capturing_provider.requests) == 1
     provider_input = capturing_provider.requests[0].input
     assert [item.type for item in provider_input] == ["message", "message"]
@@ -762,6 +896,7 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
             )
         ),
         max_delegation_depth=8,
+        max_turns=10,
         message_queue=SessionMessageQueue(
             queued_input_repository=queued_input_repository,
             item_repository=item_repository,

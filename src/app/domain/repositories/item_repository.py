@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import func
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import ItemAttachmentModel, ItemModel
 from app.domain.item import Attachment, Item
@@ -16,9 +14,7 @@ class ItemRepository:
 
     def get(self, item_id: str) -> Item | None:
         model = self.session.scalar(
-            select(ItemModel)
-            .options(selectinload(ItemModel.attachments))
-            .where(ItemModel.id == item_id)
+            select(ItemModel).options(selectinload(ItemModel.attachments)).where(ItemModel.id == item_id)
         )
         return None if model is None else self._to_domain(model)
 
@@ -59,10 +55,7 @@ class ItemRepository:
         return [self._to_domain(model) for model in models]
 
     def get_last_sequence(self, agent_id: str) -> int:
-        value = self.session.scalar(
-            select(func.max(ItemModel.sequence))
-            .where(ItemModel.agent_id == agent_id)
-        )
+        value = self.session.scalar(select(func.max(ItemModel.sequence)).where(ItemModel.agent_id == agent_id))
         return 0 if value is None else int(value)
 
     def save(self, item: Item) -> Item:
@@ -106,9 +99,7 @@ class ItemRepository:
     def delete_many(self, item_ids: list[str]) -> None:
         if not item_ids:
             return
-        models = self.session.scalars(
-            select(ItemModel).where(ItemModel.id.in_(item_ids))
-        ).all()
+        models = self.session.scalars(select(ItemModel).where(ItemModel.id.in_(item_ids))).all()
         for model in models:
             self.session.delete(model)
         self.session.flush()

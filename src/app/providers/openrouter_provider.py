@@ -190,13 +190,8 @@ class OpenRouterProvider(Provider):
                 http_request,
                 timeout=_OPENROUTER_HTTP_TIMEOUT_SECONDS,
             ) as response:  # noqa: S310
-                lines = (
-                    raw_line.decode("utf-8", errors="ignore").rstrip("\r\n")
-                    for raw_line in response
-                )
-                yield from self._iter_stream_events_from_payloads(
-                    self._iter_sse_payloads(lines, signal=signal)
-                )
+                lines = (raw_line.decode("utf-8", errors="ignore").rstrip("\r\n") for raw_line in response)
+                yield from self._iter_stream_events_from_payloads(self._iter_sse_payloads(lines, signal=signal))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
             yield ProviderErrorEvent(
@@ -365,11 +360,7 @@ class OpenRouterProvider(Provider):
                 function_state = state.function_calls.get(index)
                 function_payload = tool_call.get("function") or {}
                 arguments_delta = function_payload.get("arguments")
-                if (
-                    function_state is not None
-                    and isinstance(arguments_delta, str)
-                    and arguments_delta
-                ):
+                if function_state is not None and isinstance(arguments_delta, str) and arguments_delta:
                     events.append(
                         ProviderFunctionCallDeltaEvent(
                             call_id=function_state.call_id,
@@ -428,11 +419,7 @@ class OpenRouterProvider(Provider):
             input_tokens=int(usage_payload.get("prompt_tokens") or 0),
             output_tokens=int(usage_payload.get("completion_tokens") or 0),
             total_tokens=int(usage_payload.get("total_tokens") or 0),
-            cached_tokens=int(
-                prompt_tokens_details.get("cached_tokens")
-                or usage_payload.get("cached_tokens")
-                or 0
-            ),
+            cached_tokens=int(prompt_tokens_details.get("cached_tokens") or usage_payload.get("cached_tokens") or 0),
         )
 
     @staticmethod
@@ -458,31 +445,34 @@ class OpenRouterProvider(Provider):
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": request_data.instructions},
         ]
+        pending_tool_calls: list[dict[str, Any]] = []
+
+        def flush_pending_tool_calls() -> None:
+            if pending_tool_calls:
+                messages.append({"role": "assistant", "tool_calls": list(pending_tool_calls)})
+                pending_tool_calls.clear()
 
         for item in request_data.input:
+            if isinstance(item, ProviderFunctionCallInputItem):
+                pending_tool_calls.append(
+                    {
+                        "id": item.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": item.name,
+                            "arguments": json.dumps(item.arguments),
+                        },
+                    }
+                )
+                continue
+
+            flush_pending_tool_calls()
+
             if isinstance(item, ProviderMessageInputItem):
                 messages.append(
                     {
                         "role": item.role,
                         "content": item.content,
-                    }
-                )
-                continue
-
-            if isinstance(item, ProviderFunctionCallInputItem):
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "tool_calls": [
-                            {
-                                "id": item.call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": item.name,
-                                    "arguments": json.dumps(item.arguments),
-                                },
-                            }
-                        ],
                     }
                 )
                 continue
@@ -497,6 +487,7 @@ class OpenRouterProvider(Provider):
                     }
                 )
 
+        flush_pending_tool_calls()
         return messages
 
     @staticmethod
@@ -532,11 +523,7 @@ class OpenRouterProvider(Provider):
             input_tokens=int(usage_payload.get("prompt_tokens") or 0),
             output_tokens=int(usage_payload.get("completion_tokens") or 0),
             total_tokens=int(usage_payload.get("total_tokens") or 0),
-            cached_tokens=int(
-                prompt_tokens_details.get("cached_tokens")
-                or usage_payload.get("cached_tokens")
-                or 0
-            ),
+            cached_tokens=int(prompt_tokens_details.get("cached_tokens") or usage_payload.get("cached_tokens") or 0),
         )
         return ProviderResponse(
             id=str(payload.get("id") or "") or None,

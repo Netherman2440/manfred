@@ -6,7 +6,6 @@ from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.services.filesystem import AgentFilesystemService, FilesystemSubject, FilesystemWriteRequest
 from app.tools.definitions.filesystem.common import run_filesystem_action
 
-
 WRITE_FILE_PARAMETERS = {
     "type": "object",
     "properties": {
