@@ -17,7 +17,6 @@ from app.services.filesystem.types import (
     FilesystemManageRequest,
     FilesystemReadRequest,
     FilesystemSearchRequest,
-    FilesystemSubject,
     FilesystemToolError,
     FilesystemWriteRequest,
     ResolvedFilesystemPath,
