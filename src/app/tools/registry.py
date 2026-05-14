@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
+from typing import Any
 
 from app.domain.tool import Tool, ToolDefinition, ToolExecutionContext, ToolResult
 from app.runtime.cancellation import CancellationSignal
-from typing import Any, Iterable
-
 
 
 class ToolRegistry:

@@ -18,17 +18,17 @@ _NON_ALNUM_PATTERN = re.compile(r"[^a-z0-9._-]+")
 @dataclass(slots=True, frozen=True)
 class UserWorkspaceLayout:
     workspace_key: str
-    root: Path            # fs_root / user_key
-    workspaces_root: Path # fs_root / user_key / workspaces
+    root: Path  # fs_root / user_key
+    workspaces_root: Path  # fs_root / user_key / workspaces
 
 
 @dataclass(slots=True, frozen=True)
 class SessionWorkspaceLayout:
     user_workspace: UserWorkspaceLayout
-    root: Path            # workspaces_root / date / session_id
-    files_dir: Path       # root / files
-    attachments_dir: Path # root / attachments
-    plan_file: Path       # root / plan.md
+    root: Path  # workspaces_root / date / session_id
+    files_dir: Path  # root / files
+    attachments_dir: Path  # root / attachments
+    plan_file: Path  # root / plan.md
 
 
 class WorkspaceLayoutService:
@@ -45,11 +45,7 @@ class WorkspaceLayoutService:
         plan_file_name: str = "plan.md",
     ) -> None:
         fs_root = Path(workspace_path)
-        self.fs_root = (
-            (repo_root / fs_root).resolve()
-            if not fs_root.is_absolute()
-            else fs_root.resolve()
-        )
+        self.fs_root = (repo_root / fs_root).resolve() if not fs_root.is_absolute() else fs_root.resolve()
         self.agent_mount_names = agent_mount_names or []
         self.default_agent_source_dir = default_agent_source_dir
 
@@ -93,21 +89,34 @@ class WorkspaceLayoutService:
                 self.default_agent_source_dir,
             )
         elif self.default_agent_source_dir:
-            target = layout.root / "agents" / self.default_agent_name
-            if not target.exists():
-                try:
-                    shutil.copytree(self.default_agent_source_dir, target)
-                except FileExistsError:
-                    pass
-                except OSError:
-                    logger.error(
-                        "Failed to copy default agent %s → %s",
-                        self.default_agent_source_dir,
-                        target,
-                        exc_info=True,
-                    )
+            agents_root = layout.root / "agents"
+            main_target = agents_root / self.default_agent_name
+            self._copytree_if_absent(self.default_agent_source_dir, main_target)
+
+            siblings_root = self.default_agent_source_dir.parent
+            if siblings_root.is_dir():
+                for sibling in sorted(siblings_root.iterdir()):
+                    if not sibling.is_dir() or sibling == self.default_agent_source_dir:
+                        continue
+                    self._copytree_if_absent(sibling, agents_root / sibling.name)
 
         return layout
+
+    @staticmethod
+    def _copytree_if_absent(source: Path, target: Path) -> None:
+        if target.exists():
+            return
+        try:
+            shutil.copytree(source, target)
+        except FileExistsError:
+            pass
+        except OSError:
+            logger.error(
+                "Failed to copy default agent %s → %s",
+                source,
+                target,
+                exc_info=True,
+            )
 
     def ensure_session_workspace(self, *, user: User, session: Session) -> SessionWorkspaceLayout:
         user_workspace = self.ensure_user_workspace(user)

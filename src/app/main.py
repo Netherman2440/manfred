@@ -24,11 +24,11 @@ def create_app() -> FastAPI:
         mcp_manager = container.mcp_manager()
         http_client = container.http_client()
         unsubscribe_logger = subscribe_event_logger(event_bus)
+        markdown_event_logger = container.markdown_event_logger()
+        unsubscribe_markdown = markdown_event_logger.subscribe(event_bus)
         langfuse_subscriber = container.langfuse_subscriber()
         unsubscribe_langfuse = (
-            langfuse_subscriber.subscribe(event_bus)
-            if langfuse_subscriber is not None
-            else (lambda: None)
+            langfuse_subscriber.subscribe(event_bus) if langfuse_subscriber is not None else (lambda: None)
         )
         try:
             await mcp_manager.start()
@@ -39,6 +39,7 @@ def create_app() -> FastAPI:
             unsubscribe_langfuse()
             if langfuse_subscriber is not None:
                 langfuse_subscriber.shutdown()
+            unsubscribe_markdown()
             unsubscribe_logger()
 
     app = FastAPI(

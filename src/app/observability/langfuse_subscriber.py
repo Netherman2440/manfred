@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from contextlib import nullcontext
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
@@ -22,7 +22,6 @@ from app.providers import (
     ProviderTextOutputItem,
     ProviderUsage,
 )
-
 
 logger = logging.getLogger("app.observability.langfuse")
 
@@ -284,19 +283,11 @@ def _extract_generation_input(input_items: list[Any]) -> str | None:
 
 
 def _extract_generation_output(output_items: list[Any]) -> str | None:
-    texts = [
-        item.text
-        for item in output_items
-        if isinstance(item, ProviderTextOutputItem) and item.text
-    ]
+    texts = [item.text for item in output_items if isinstance(item, ProviderTextOutputItem) and item.text]
     if not texts:
         return None
     return "".join(texts)
 
 
 def _extract_tool_calls(output_items: list[Any]) -> list[str]:
-    return [
-        item.name
-        for item in output_items
-        if isinstance(item, ProviderFunctionCallOutputItem) and item.name
-    ]
+    return [item.name for item in output_items if isinstance(item, ProviderFunctionCallOutputItem) and item.name]

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 
 import httpx
 
-
 logger = logging.getLogger("app.services.model_catalog_service")
 
 

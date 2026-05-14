@@ -3,10 +3,9 @@ from __future__ import annotations
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.v1.models.schema import ModelSummarySchema, ModelsListResponse
+from app.api.v1.models.schema import ModelsListResponse, ModelSummarySchema
 from app.container import Container
 from app.services.model_catalog_service import ModelCatalogService, ModelCatalogUnavailable
-
 
 router = APIRouter(prefix="/models", tags=["models"])
 

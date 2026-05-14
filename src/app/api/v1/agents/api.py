@@ -12,9 +12,9 @@ from app.api.v1.agents.schema import (
     AgentDetailResponse,
     AgentDetailSchema,
     AgentSessionsResponse,
+    AgentsListResponse,
     AgentSummarySchema,
     AgentUpdateRequest,
-    AgentsListResponse,
 )
 from app.container import Container
 from app.domain import User
@@ -27,15 +27,14 @@ from app.services.agent_template_service import (
 )
 from app.services.session_query_service import SessionQueryIntegrityError, SessionQueryService
 
-
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 def _get_default_user(settings: object) -> User:
     """Resolve the default user for single-user mode."""
-    from app.config import Settings
-    from app.domain import User
     from app.db.base import utcnow
+    from app.domain import User
+
     s = settings  # type: ignore[assignment]
     return User(
         id=s.DEFAULT_USER_ID,
@@ -54,10 +53,7 @@ def list_agents(
     user = _get_default_user(settings)
     summaries = agent_template_service.list_templates(user)
     return AgentsListResponse(
-        data=[
-            AgentSummarySchema(name=s.name, color=s.color, description=s.description)
-            for s in summaries
-        ]
+        data=[AgentSummarySchema(name=s.name, color=s.color, description=s.description) for s in summaries]
     )
 
 

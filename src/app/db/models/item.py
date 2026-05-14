@@ -8,9 +8,7 @@ from app.db.base import Base, utcnow
 
 class ItemModel(Base):
     __tablename__ = "items"
-    __table_args__ = (
-        Index("ix_items_agent_id_sequence", "agent_id", "sequence", unique=True),
-    )
+    __table_args__ = (Index("ix_items_agent_id_sequence", "agent_id", "sequence", unique=True),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     session_id: Mapped[str] = mapped_column(

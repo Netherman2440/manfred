@@ -49,8 +49,7 @@ def load_mcp_config(config_path: Path) -> McpConfig:
         if raw_env is None:
             raw_env = {}
         if not isinstance(raw_env, dict) or any(
-            not isinstance(key, str) or not isinstance(value, str)
-            for key, value in raw_env.items()
+            not isinstance(key, str) or not isinstance(value, str) for key, value in raw_env.items()
         ):
             raise ValueError(f"MCP server '{server_name}' has invalid 'env'.")
 

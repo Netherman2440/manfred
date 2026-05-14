@@ -132,7 +132,7 @@ def test_event_logger_logs_tool_results_and_agent_result(caplog) -> None:  # noq
     assert "event=tool.called agent=manfred" in caplog.text
     assert "input_tokens=" not in caplog.text.splitlines()[0]
     assert 'tool=calculator tool_arguments={"operation": "subtract", "a": 17466, "b": 1928}' in caplog.text
-    assert 'event=tool.completed agent=manfred content=15538.0' in caplog.text
+    assert "event=tool.completed agent=manfred content=15538.0" in caplog.text
     assert "input_tokens=" not in caplog.text.splitlines()[1]
     assert 'tool_result={"ok": true, "output": "15538.0"}' in caplog.text
     assert 'event=agent.completed agent=manfred content="Wynik to 15538."' in caplog.text

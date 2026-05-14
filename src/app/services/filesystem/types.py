@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal, TypeAlias
 
-
 LineSpec: TypeAlias = str | dict[str, int] | list[int] | None
 
 

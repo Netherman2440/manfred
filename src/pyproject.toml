@@ -13,5 +13,39 @@ dependencies = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "sqlalchemy>=2.0,<3.0",
+    "tiktoken>=0.7.0",
     "uvicorn>=0.38.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9.0",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long — handled by formatter
+    "E402",  # module-level import not at top of file
+    "B008",  # function call in argument defaults (FastAPI Depends pattern)
+    "B023",  # function uses loop variable (false positives for closures called in same iteration)
+    "UP040", # `TypeAlias` vs `type` keyword
+    "SIM103", # needless bool — clarity trade-off
+    "SIM108", # ternary instead of if-else — clarity trade-off
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B"]

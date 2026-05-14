@@ -38,7 +38,6 @@ from app.events import (
     build_event_context,
 )
 from app.mcp import McpManager
-from app.services.filesystem import AgentFilesystemService
 from app.providers import (
     ProviderDoneEvent,
     ProviderErrorEvent,
@@ -59,6 +58,7 @@ from app.runtime.cancellation import CancellationRequestedError, CancellationSig
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
+from app.services.filesystem import AgentFilesystemService
 from app.tools.registry import ToolRegistry
 from app.utils.string_validator import _require_non_empty_string
 
@@ -95,6 +95,7 @@ class Runner:
         event_bus: EventBus,
         agent_loader: AgentLoader,
         max_delegation_depth: int,
+        max_turns: int,
         message_queue: SessionMessageQueue,
         filesystem_service: AgentFilesystemService,
     ) -> None:
@@ -108,6 +109,7 @@ class Runner:
         self.event_bus = event_bus
         self.agent_loader = agent_loader
         self.max_delegation_depth = max_delegation_depth
+        self.max_turns = max_turns
         self.message_queue = message_queue
         self.filesystem_service = filesystem_service
 
@@ -115,11 +117,13 @@ class Runner:
         self,
         agent_id: str,
         *,
-        max_turns: int = 10,
+        max_turns: int | None = None,
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
         signal: CancellationSignal | None = None,
     ) -> RunResult:
+        if max_turns is None:
+            max_turns = self.max_turns
         context = self.load_agent_context(
             agent_id,
             trace_id=trace_id,
@@ -236,11 +240,13 @@ class Runner:
         self,
         agent_id: str,
         *,
-        max_turns: int = 10,
+        max_turns: int | None = None,
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
         signal: CancellationSignal | None = None,
     ) -> AsyncIterable[ProviderStreamEvent]:
+        if max_turns is None:
+            max_turns = self.max_turns
         context = self.load_agent_context(
             agent_id,
             trace_id=trace_id,
@@ -498,9 +504,7 @@ class Runner:
         context.items.extend(self.store_provider_output(context.agent, context.session, response))
 
         function_calls = [
-            output_item
-            for output_item in response.output
-            if isinstance(output_item, ProviderFunctionCallOutputItem)
+            output_item for output_item in response.output if isinstance(output_item, ProviderFunctionCallOutputItem)
         ]
 
         if not function_calls:  # TODO: support reasoning items when provider exposes them
@@ -1129,9 +1133,9 @@ class Runner:
         return run_result
 
     @staticmethod
-    def map_items_to_provider_input(items: list[Item]) -> list[
-        ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem
-    ]:
+    def map_items_to_provider_input(
+        items: list[Item],
+    ) -> list[ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem]:
         provider_input: list[
             ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem
         ] = []
@@ -1401,7 +1405,9 @@ class Runner:
             return
         resolved_trace_id = trace_id or agent.trace_id or parent_agent.trace_id or uuid4().hex
 
-        waiting_entry = next((entry for entry in parent_agent.waiting_for if entry.call_id == agent.source_call_id), None)
+        waiting_entry = next(
+            (entry for entry in parent_agent.waiting_for if entry.call_id == agent.source_call_id), None
+        )
         if waiting_entry is None:
             return
 

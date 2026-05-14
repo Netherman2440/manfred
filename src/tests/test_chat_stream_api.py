@@ -85,9 +85,7 @@ async def test_chat_stream_returns_sse_payloads() -> None:
             ChatStreamSessionEvent(session_id="session-1", agent_id="agent-1"),
             ProviderTextDeltaEvent(delta="Hello"),
             ProviderTextDoneEvent(text="Hello"),
-            ProviderDoneEvent(
-                response=ProviderResponse(output=[ProviderTextOutputItem(text="Hello")])
-            ),
+            ProviderDoneEvent(response=ProviderResponse(output=[ProviderTextOutputItem(text="Hello")])),
         ]
     )
 

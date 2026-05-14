@@ -6,7 +6,6 @@ from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.services.filesystem import AgentFilesystemService, FilesystemSearchRequest, FilesystemSubject
 from app.tools.definitions.filesystem.common import normalize_string_list, run_filesystem_action
 
-
 SEARCH_FILE_PARAMETERS = {
     "type": "object",
     "properties": {

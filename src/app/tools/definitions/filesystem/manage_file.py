@@ -6,7 +6,6 @@ from app.domain import FunctionToolDefinition, Tool, ToolExecutionContext
 from app.services.filesystem import AgentFilesystemService, FilesystemManageRequest, FilesystemSubject
 from app.tools.definitions.filesystem.common import run_filesystem_action
 
-
 MANAGE_FILE_PARAMETERS = {
     "type": "object",
     "properties": {

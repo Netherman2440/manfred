@@ -6,7 +6,6 @@ from app.api.v1.models.api import router as models_router
 from app.api.v1.tools.api import router as tools_router
 from app.api.v1.users.api import router as users_router
 
-
 api_router = APIRouter()
 api_router.include_router(chat_router)
 api_router.include_router(users_router)

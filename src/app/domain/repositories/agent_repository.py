@@ -22,17 +22,13 @@ class AgentRepository:
 
     def list_by_session(self, session_id: str) -> list[Agent]:
         models = self.session.scalars(
-            select(AgentModel)
-            .where(AgentModel.session_id == session_id)
-            .order_by(AgentModel.created_at.asc())
+            select(AgentModel).where(AgentModel.session_id == session_id).order_by(AgentModel.created_at.asc())
         ).all()
         return [self._to_domain(model) for model in models]
 
     def list_children(self, parent_id: str) -> list[Agent]:
         models = self.session.scalars(
-            select(AgentModel)
-            .where(AgentModel.parent_id == parent_id)
-            .order_by(AgentModel.created_at.asc())
+            select(AgentModel).where(AgentModel.parent_id == parent_id).order_by(AgentModel.created_at.asc())
         ).all()
         return [self._to_domain(model) for model in models]
 
@@ -75,9 +71,7 @@ class AgentRepository:
     def delete_many(self, agent_ids: list[str]) -> None:
         if not agent_ids:
             return
-        models = self.session.scalars(
-            select(AgentModel).where(AgentModel.id.in_(agent_ids))
-        ).all()
+        models = self.session.scalars(select(AgentModel).where(AgentModel.id.in_(agent_ids))).all()
         for model in models:
             self.session.delete(model)
         self.session.flush()

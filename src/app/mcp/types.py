@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-
 MCP_TOOL_SEPARATOR = "__"
 McpServerStatus = Literal["connected", "disconnected"]
 

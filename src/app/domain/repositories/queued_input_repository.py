@@ -25,8 +25,7 @@ class QueuedInputRepository:
 
     def get_pending_count(self, session_id: str, agent_id: str) -> int:
         value = self.session.scalar(
-            select(func.count(QueuedInputModel.id))
-            .where(
+            select(func.count(QueuedInputModel.id)).where(
                 QueuedInputModel.session_id == session_id,
                 QueuedInputModel.agent_id == agent_id,
                 QueuedInputModel.consumed_at.is_(None),

@@ -14,7 +14,6 @@ from app.services.session_query_service import (
     SessionQueryService,
 )
 
-
 router = APIRouter(prefix="/users", tags=["users"])
 
 
