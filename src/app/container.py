@@ -1,41 +1,32 @@
-from collections.abc import Callable
-from pathlib import Path
-
 import httpx
 from dependency_injector import containers, providers
 from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.domain import Tool
-from app.domain.repositories import (
-    AgentRepository,
-    ItemRepository,
-    QueuedInputRepository,
-    SessionRepository,
-    UserRepository,
-)
 from app.events import EventBus
+from app.events.subscribers import ObserverSubscriber, ReflectorSubscriber
 from app.mcp import StdioMcpManager
-from app.observability import MarkdownEventLogger, build_langfuse_subscriber
+from app.observability import MarkdownEventLogger, SessionWorkspaceResolver, build_langfuse_subscriber
 from app.providers import OpenRouterProvider, ProviderRegistry
+from app.runtime.background_tasks import BackgroundTaskRegistry
 from app.runtime.cancellation import ActiveRunRegistry
-from app.runtime.message_queue import SessionMessageQueue
-from app.runtime.runner import Runner
 from app.services.agent_loader import AgentLoader
 from app.services.agent_template_service import AgentTemplateService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
-from app.services.filesystem import (
-    AgentFilesystemService,
-    FilesystemPathResolver,
-    WorkspaceLayoutService,
-    WorkspaceScopedFilesystemPolicy,
-    build_mounts,
+from app.services.filesystem import AgentFilesystemService, WorkspaceLayoutService
+from app.services.lock_service import LockService
+from app.services.memory import (
+    MemoryPathResolver,
+    MemoryService,
+    MemoryTokenCounter,
+    ObserveUseCase,
 )
 from app.services.model_catalog_service import ModelCatalogService
 from app.services.session_query_service import SessionQueryService
+from app.services.tiktokenizer import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
 from app.tools.definitions.aidevs import (
     build_fetch_aidevs_data_tool,
@@ -51,63 +42,7 @@ from app.tools.definitions.filesystem import (
     build_write_file_tool,
 )
 from app.tools.registry import ToolRegistry
-
-
-def build_engine(database_url: str) -> Engine:
-    connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
-    return create_engine(database_url, future=True, connect_args=connect_args)
-
-
-def build_session_factory(engine: Engine) -> Callable[[], Session]:
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
-
-def build_db_session(session_factory: Callable[[], Session]) -> Session:
-    return session_factory()
-
-
-def _resolve_fs_root(*, repo_root: Path, workspace_path: str) -> Path:
-    root = Path(workspace_path)
-    return (repo_root / root).resolve() if not root.is_absolute() else root.resolve()
-
-
-def build_filesystem_service(
-    *,
-    settings: Settings,
-    repo_root: Path,
-    workspace_layout_service: WorkspaceLayoutService,
-) -> AgentFilesystemService:
-    fs_root = _resolve_fs_root(repo_root=repo_root, workspace_path=settings.WORKSPACE_PATH)
-    mounts = build_mounts(mount_names=settings.mount_names(), fs_root=fs_root)
-    path_resolver = FilesystemPathResolver(mounts)
-    access_policy = WorkspaceScopedFilesystemPolicy(
-        workspace_layout_service=workspace_layout_service,
-        fs_root=fs_root,
-    )
-    return AgentFilesystemService(
-        path_resolver=path_resolver,
-        access_policy=access_policy,
-        max_file_size=settings.MAX_FILE_SIZE,
-        exclude_patterns=settings.filesystem_exclude_patterns(),
-    )
-
-
-def build_workspace_layout_service(
-    *,
-    settings: Settings,
-    repo_root: Path,
-    default_agent_source_dir: Path | None = None,
-) -> WorkspaceLayoutService:
-    return WorkspaceLayoutService(
-        repo_root=repo_root,
-        workspace_path=settings.WORKSPACE_PATH,
-        agent_mount_names=settings.mount_names(),
-        default_agent_source_dir=default_agent_source_dir,
-        default_agent_name=settings.DEFAULT_AGENT,
-        files_dir_name=settings.FILES_DIR_NAME,
-        attachments_dir_name=settings.ATTACHMENTS_DIR_NAME,
-        plan_file_name=settings.PLAN_FILE_NAME,
-    )
+from app.utils.paths import default_user_workspace_path, get_repo_root, resolve_relative_path
 
 
 def get_tools(
@@ -127,153 +62,6 @@ def get_tools(
     ]
 
 
-def build_provider_registry(openrouter_provider: OpenRouterProvider) -> ProviderRegistry:
-    return ProviderRegistry(providers={"openrouter": openrouter_provider})
-
-
-def get_repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
-
-def _build_agent_loader_workspace_path(*, settings: Settings, repo_root: Path) -> str:
-    """Return the user workspace root path string for AgentLoader.
-    Since this is a single-user app, compute user workspace key from default user settings.
-    """
-    from app.services.filesystem import WorkspaceLayoutService as _WLS  # local import to avoid circular
-
-    wls = _WLS(repo_root=repo_root, workspace_path=settings.WORKSPACE_PATH)
-    workspace_key = wls.resolve_user_workspace_key(
-        user_id=settings.DEFAULT_USER_ID,
-        user_name=settings.DEFAULT_USER_NAME,
-    )
-    root = Path(settings.WORKSPACE_PATH)
-    if not root.is_absolute():
-        root = (repo_root / root).resolve()
-    else:
-        root = root.resolve()
-    return str(root / workspace_key)
-
-
-def build_mcp_manager(
-    *,
-    settings: Settings,
-    repo_root: Path,
-) -> StdioMcpManager:
-    config_path = Path(settings.MCP_CONFIG_PATH)
-    if not config_path.is_absolute():
-        config_path = repo_root / config_path
-
-    return StdioMcpManager(
-        repo_root=repo_root,
-        config_path=config_path.resolve(),
-        client_name="manfred",
-        client_version=settings.VERSION,
-        request_timeout_seconds=settings.MCP_TOOL_TIMEOUT_MS / 1000,
-    )
-
-
-def build_runner(
-    *,
-    session: Session,
-    settings: Settings,
-    tool_registry: ToolRegistry,
-    mcp_manager: StdioMcpManager,
-    provider_registry: ProviderRegistry,
-    event_bus: EventBus,
-    agent_loader: AgentLoader,
-    message_queue: SessionMessageQueue,
-    filesystem_service: AgentFilesystemService,
-) -> Runner:
-    return Runner(
-        agent_repository=AgentRepository(session),
-        session_repository=SessionRepository(session),
-        item_repository=ItemRepository(session),
-        user_repository=UserRepository(session),
-        tool_registry=tool_registry,
-        mcp_manager=mcp_manager,
-        provider_registry=provider_registry,
-        event_bus=event_bus,
-        agent_loader=agent_loader,
-        max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
-        max_turns=settings.MAX_TURNS,
-        message_queue=message_queue,
-        filesystem_service=filesystem_service,
-    )
-
-
-def build_chat_service(
-    *,
-    session: Session,
-    settings: Settings,
-    agent_loader: AgentLoader,
-    tool_registry: ToolRegistry,
-    mcp_manager: StdioMcpManager,
-    provider_registry: ProviderRegistry,
-    event_bus: EventBus,
-    active_run_registry: ActiveRunRegistry,
-    workspace_layout_service: WorkspaceLayoutService,
-    attachment_storage_service: ChatAttachmentStorageService,
-    filesystem_service: AgentFilesystemService,
-) -> ChatService:
-    user_repository = UserRepository(session)
-    session_repository = SessionRepository(session)
-    agent_repository = AgentRepository(session)
-    item_repository = ItemRepository(session)
-    queued_input_repository = QueuedInputRepository(session)
-    message_queue = SessionMessageQueue(
-        queued_input_repository=queued_input_repository,
-        item_repository=item_repository,
-    )
-
-    return ChatService(
-        session=session,
-        settings=settings,
-        agent_loader=agent_loader,
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=queued_input_repository,
-        runner=build_runner(
-            session=session,
-            settings=settings,
-            tool_registry=tool_registry,
-            mcp_manager=mcp_manager,
-            provider_registry=provider_registry,
-            event_bus=event_bus,
-            agent_loader=agent_loader,
-            message_queue=message_queue,
-            filesystem_service=filesystem_service,
-        ),
-        active_run_registry=active_run_registry,
-        workspace_layout_service=workspace_layout_service,
-        attachment_storage_service=attachment_storage_service,
-        message_queue=message_queue,
-    )
-
-
-def build_session_query_service(*, session: Session) -> SessionQueryService:
-    return SessionQueryService(
-        session_repository=SessionRepository(session),
-        agent_repository=AgentRepository(session),
-        item_repository=ItemRepository(session),
-    )
-
-
-def build_markdown_event_logger(*, session_factory: Callable[[], Session]) -> MarkdownEventLogger:
-    def resolver(session_id: str) -> Path | None:
-        sa_session = session_factory()
-        try:
-            session = SessionRepository(sa_session).get(session_id)
-            if session is None or not session.workspace_path:
-                return None
-            return Path(session.workspace_path)
-        finally:
-            sa_session.close()
-
-    return MarkdownEventLogger(workspace_resolver=resolver)
-
-
 class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
         packages=[
@@ -288,21 +76,36 @@ class Container(containers.DeclarativeContainer):
     )
 
     settings = providers.Singleton(Settings)
-    db_engine = providers.Singleton(build_engine, database_url=settings.provided.DATABASE_URL)
-    session_factory = providers.Singleton(build_session_factory, engine=db_engine)
-    db_session = providers.Factory(build_db_session, session_factory=session_factory)
+    db_engine = providers.Singleton(
+        create_engine,
+        settings.provided.DATABASE_URL,
+        connect_args={"check_same_thread": False},
+    )
+    session_factory = providers.Singleton(
+        sessionmaker,
+        bind=db_engine,
+        autoflush=False,
+        autocommit=False,
+        expire_on_commit=False,
+    )
+    db_session = providers.Factory(session_factory.provided.call())
 
     repo_root = providers.Callable(get_repo_root)
 
     workspace_layout_service = providers.Singleton(
-        build_workspace_layout_service,
-        settings=settings,
+        WorkspaceLayoutService,
         repo_root=repo_root,
+        workspace_path=settings.provided.WORKSPACE_PATH,
+        agent_mount_names=settings.provided.mount_names.call(),
         default_agent_source_dir=providers.Callable(
             lambda settings, repo_root: repo_root / settings.DEFAULT_AGENT_SOURCE_DIR,
             settings=settings,
             repo_root=repo_root,
         ),
+        default_agent_name=settings.provided.DEFAULT_AGENT,
+        files_dir_name=settings.provided.FILES_DIR_NAME,
+        attachments_dir_name=settings.provided.ATTACHMENTS_DIR_NAME,
+        plan_file_name=settings.provided.PLAN_FILE_NAME,
     )
     chat_attachment_storage_service = providers.Singleton(
         ChatAttachmentStorageService,
@@ -310,10 +113,11 @@ class Container(containers.DeclarativeContainer):
         max_file_size=settings.provided.MAX_FILE_SIZE,
     )
     filesystem_service = providers.Singleton(
-        build_filesystem_service,
-        settings=settings,
-        repo_root=repo_root,
+        AgentFilesystemService,
         workspace_layout_service=workspace_layout_service,
+        mount_names=settings.provided.mount_names.call(),
+        max_file_size=settings.provided.MAX_FILE_SIZE,
+        exclude_patterns=settings.provided.filesystem_exclude_patterns.call(),
     )
     tool_registry = providers.Singleton(
         ToolRegistry,
@@ -328,11 +132,16 @@ class Container(containers.DeclarativeContainer):
         build_langfuse_subscriber,
         settings=settings,
     )
-    markdown_event_logger = providers.Singleton(
-        build_markdown_event_logger,
+    session_workspace_resolver = providers.Singleton(
+        SessionWorkspaceResolver,
         session_factory=session_factory,
     )
+    markdown_event_logger = providers.Singleton(
+        MarkdownEventLogger,
+        workspace_resolver=session_workspace_resolver,
+    )
     active_run_registry = providers.Singleton(ActiveRunRegistry)
+    background_task_registry = providers.Singleton(BackgroundTaskRegistry)
 
     openrouter_provider = providers.Singleton(
         OpenRouterProvider,
@@ -340,13 +149,24 @@ class Container(containers.DeclarativeContainer):
         api_key=settings.provided.OPEN_ROUTER_API_KEY,
     )
     provider_registry = providers.Singleton(
-        build_provider_registry,
-        openrouter_provider=openrouter_provider,
+        ProviderRegistry,
+        providers={"openrouter": openrouter_provider},
+    )
+    mcp_config_path = providers.Callable(
+        resolve_relative_path,
+        settings.provided.MCP_CONFIG_PATH,
+        base=repo_root,
     )
     mcp_manager = providers.Singleton(
-        build_mcp_manager,
-        settings=settings,
+        StdioMcpManager,
         repo_root=repo_root,
+        config_path=mcp_config_path,
+        client_name="manfred",
+        client_version=settings.provided.VERSION,
+        request_timeout_seconds=providers.Callable(
+            lambda ms: ms / 1000,
+            ms=settings.provided.MCP_TOOL_TIMEOUT_MS,
+        ),
     )
     agent_loader = providers.Singleton(
         AgentLoader,
@@ -354,14 +174,59 @@ class Container(containers.DeclarativeContainer):
         mcp_manager=mcp_manager,
         repo_root=repo_root,
         workspace_path=providers.Callable(
-            _build_agent_loader_workspace_path,
-            settings=settings,
-            repo_root=repo_root,
+            default_user_workspace_path,
+            workspace_layout_service=workspace_layout_service,
+            default_user_id=settings.provided.DEFAULT_USER_ID,
+            default_user_name=settings.provided.DEFAULT_USER_NAME,
         ),
     )
 
+    tiktokenizer_service = providers.Singleton(TiktokenizerService)
+    lock_service = providers.Singleton(LockService)
+    memory_token_counter = providers.Singleton(
+        MemoryTokenCounter,
+        tokenizer=tiktokenizer_service,
+    )
+    memory_service = providers.Singleton(
+        MemoryService,
+        provider=openrouter_provider,
+        model=settings.provided.OBSERVER_LLM_MODEL,
+    )
+    memory_path_resolver = providers.Singleton(
+        MemoryPathResolver,
+        workspace_layout_service=workspace_layout_service,
+        session_factory=session_factory,
+    )
+    observe_use_case = providers.Singleton(
+        ObserveUseCase,
+        memory_service=memory_service,
+        token_counter=memory_token_counter,
+        session_factory=session_factory,
+        event_bus=event_bus,
+        lock_service=lock_service,
+        memory_path_resolver=memory_path_resolver,
+        tokens_to_observe=settings.provided.TOKENS_TO_OBSERVE,
+    )
+    observer_subscriber = providers.Singleton(
+        ObserverSubscriber,
+        settings=settings,
+        observe_use_case=observe_use_case,
+        background_task_registry=background_task_registry,
+    )
+    reflector_subscriber = providers.Singleton(
+        ReflectorSubscriber,
+        settings=settings,
+        session_factory=session_factory,
+        memory_service=memory_service,
+        token_counter=memory_token_counter,
+        event_bus=event_bus,
+        lock_service=lock_service,
+        memory_path_resolver=memory_path_resolver,
+        background_task_registry=background_task_registry,
+    )
+
     chat_service = providers.Factory(
-        build_chat_service,
+        ChatService,
         session=db_session,
         settings=settings,
         agent_loader=agent_loader,
@@ -373,9 +238,11 @@ class Container(containers.DeclarativeContainer):
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=chat_attachment_storage_service,
         filesystem_service=filesystem_service,
+        memory_path_resolver=memory_path_resolver,
+        observe_use_case=observe_use_case,
     )
     session_query_service = providers.Factory(
-        build_session_query_service,
+        SessionQueryService,
         session=db_session,
     )
 
@@ -388,7 +255,7 @@ class Container(containers.DeclarativeContainer):
         db_session=db_session,
     )
 
-    tool_catalog_service = providers.Factory(
+    tool_catalog_service = providers.Singleton(
         ToolCatalogService,
         tool_registry=tool_registry,
         mcp_manager=mcp_manager,

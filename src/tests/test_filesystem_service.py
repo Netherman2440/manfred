@@ -15,26 +15,20 @@ from app.services.filesystem import (
     FilesystemToolError,
     FilesystemWriteRequest,
     WorkspaceLayoutService,
-    WorkspaceScopedFilesystemPolicy,
     build_mounts,
 )
 from app.tools.definitions.filesystem import build_read_file_tool
 
 
 def make_service(tmp_path: Path, *, exclude_patterns: list[str] | None = None) -> AgentFilesystemService:
-    fs_root = tmp_path / ".agent_data"
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
         workspace_path=".agent_data",
         agent_mount_names=["shared"],
     )
-    mounts = build_mounts(mount_names=["shared"], fs_root=fs_root)
     return AgentFilesystemService(
-        path_resolver=FilesystemPathResolver(mounts),
-        access_policy=WorkspaceScopedFilesystemPolicy(
-            workspace_layout_service=workspace_layout_service,
-            fs_root=fs_root,
-        ),
+        workspace_layout_service=workspace_layout_service,
+        mount_names=["shared"],
         max_file_size=1024 * 1024,
         exclude_patterns=exclude_patterns,
     )

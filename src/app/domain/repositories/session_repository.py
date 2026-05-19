@@ -53,6 +53,8 @@ class SessionRepository:
         model.status = domain_session.status.value
         model.title = domain_session.title
         model.workspace_path = domain_session.workspace_path
+        model.last_observed_item_id = domain_session.last_observed_item_id
+        model.current_task = domain_session.current_task
         model.created_at = domain_session.created_at
         model.updated_at = domain_session.updated_at
 
@@ -69,6 +71,8 @@ class SessionRepository:
             status=SessionStatus(model.status),
             title=model.title,
             workspace_path=model.workspace_path,
+            last_observed_item_id=model.last_observed_item_id,
+            current_task=model.current_task,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )

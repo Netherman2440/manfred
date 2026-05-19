@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy.orm import Session as DbSession
+
 from app.domain import Item, ItemType, MessageRole
 from app.domain.repositories import AgentRepository, ItemRepository, SessionRepository
 
@@ -16,19 +18,14 @@ class SessionQueryIntegrityError(RuntimeError):
 
 
 class SessionQueryService:
-    def __init__(
-        self,
-        *,
-        session_repository: SessionRepository,
-        agent_repository: AgentRepository,
-        item_repository: ItemRepository,
-    ) -> None:
-        self.session_repository = session_repository
-        self.agent_repository = agent_repository
-        self.item_repository = item_repository
+    def __init__(self, *, session: DbSession) -> None:
+        self.session = session
+        self.session_repository = SessionRepository(session)
+        self.agent_repository = AgentRepository(session)
+        self.item_repository = ItemRepository(session)
 
     def close(self) -> None:
-        self.session_repository.session.close()
+        self.session.close()
 
     def _build_session_list_entry(
         self,

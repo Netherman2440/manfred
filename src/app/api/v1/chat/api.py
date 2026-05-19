@@ -1,8 +1,8 @@
 import json
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.datastructures import FormData, UploadFile
 
 from app.api.v1.chat.schema import (
@@ -20,7 +20,13 @@ from app.config import Settings
 from app.container import Container
 from app.providers import ProviderStreamEvent, serialize_provider_stream_event
 from app.services.chat_attachments import IncomingAttachment
-from app.services.chat_service import ChatService, ChatServiceNotFoundError, ChatServiceValidationError
+from app.services.chat_service import (
+    ChatService,
+    ChatServiceDisabledError,
+    ChatServiceNotFoundError,
+    ChatServiceValidationError,
+    SummarizeResponse,
+)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -168,6 +174,34 @@ async def deliver(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     finally:
         chat_service.close()
+
+
+@router.post("/sessions/{session_id}/summarize")
+@inject
+async def summarize_session(
+    session_id: str,
+    chat_service: ChatService = Depends(Provide[Container.chat_service]),
+) -> Response:
+    try:
+        result: SummarizeResponse = await chat_service.summarize_session(session_id)
+    except ChatServiceDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except ChatServiceNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    finally:
+        chat_service.close()
+
+    if result.status == "no_unobserved":
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    payload: dict[str, str] = {"status": result.status}
+    if result.observations_preview is not None:
+        payload["observations_preview"] = result.observations_preview
+    if result.detail is not None:
+        payload["detail"] = result.detail
+    return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
 
 @router.post("/sessions/{session_id}/cancel", response_model=ChatResponse)

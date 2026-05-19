@@ -68,6 +68,7 @@ def api_client() -> Iterator[tuple[TestClient, sessionmaker]]:
     container.session_factory.override(providers.Object(test_session_factory))
     container.mcp_manager.override(providers.Object(StubMcpManager()))
     container.langfuse_subscriber.override(providers.Object(None))
+    container.reset_singletons()
 
     app = create_app()
 

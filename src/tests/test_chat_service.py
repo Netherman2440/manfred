@@ -41,8 +41,6 @@ from app.providers import (
     ProviderUsage,
 )
 from app.runtime.cancellation import ActiveRunRegistry
-from app.runtime.message_queue import SessionMessageQueue
-from app.runtime.runner import Runner
 from app.services.agent_loader import LoadedAgent
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment
 from app.services.chat_service import ChatService, ChatServiceValidationError, ResolvedAgentConfig
@@ -249,10 +247,10 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    user_repository = UserRepository(db_session)
-    session_repository = SessionRepository(db_session)
-    agent_repository = AgentRepository(db_session)
-    item_repository = ItemRepository(db_session)
+    UserRepository(db_session)
+    SessionRepository(db_session)
+    AgentRepository(db_session)
+    ItemRepository(db_session)
     tool_registry = ToolRegistry(tools=[delegate_tool, ask_user_tool])
     agent_loader = FakeAgentLoader(
         root_agent=LoadedAgent(
@@ -270,11 +268,19 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
             )
         },
     )
-    runner = Runner(
-        agent_repository=agent_repository,
-        session_repository=session_repository,
-        item_repository=item_repository,
-        user_repository=user_repository,
+    chat_service = ChatService(
+        session=db_session,
+        settings=Settings(
+            _env_file=None,
+            DEFAULT_AGENT="manfred",
+            OPEN_ROUTER_LLM_MODEL="test-model",
+            DEFAULT_USER_ID="default-user",
+            DEFAULT_USER_NAME="Default User",
+            LANGFUSE_ENABLED=False,
+            MAX_DELEGATION_DEPTH=8,
+            MAX_TURNS=10,
+        ),
+        agent_loader=agent_loader,
         tool_registry=tool_registry,
         mcp_manager=FakeMcpManager(),
         provider_registry=ProviderRegistry(
@@ -309,32 +315,6 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
             }
         ),
         event_bus=EventBus(),
-        agent_loader=agent_loader,
-        max_delegation_depth=8,
-        max_turns=10,
-        message_queue=SessionMessageQueue(
-            queued_input_repository=QueuedInputRepository(db_session),
-            item_repository=item_repository,
-        ),
-        filesystem_service=FakeFilesystemService(),
-    )
-    chat_service = ChatService(
-        session=db_session,
-        settings=Settings(
-            _env_file=None,
-            DEFAULT_AGENT="manfred",
-            OPEN_ROUTER_LLM_MODEL="test-model",
-            DEFAULT_USER_ID="default-user",
-            DEFAULT_USER_NAME="Default User",
-            LANGFUSE_ENABLED=False,
-        ),
-        agent_loader=agent_loader,
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=QueuedInputRepository(db_session),
-        runner=runner,
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=WorkspaceLayoutService(
             repo_root=tmp_path,
@@ -347,10 +327,7 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
             ),
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=QueuedInputRepository(db_session),
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     response = await chat_service.process_chat(
@@ -378,10 +355,10 @@ async def test_process_chat_include_tool_result_returns_session_trace_for_delega
 
 
 def test_load_session_creates_workspace_layout_for_new_session(db_session: Session, tmp_path: Path) -> None:
-    user_repository = UserRepository(db_session)
-    session_repository = SessionRepository(db_session)
-    agent_repository = AgentRepository(db_session)
-    item_repository = ItemRepository(db_session)
+    UserRepository(db_session)
+    SessionRepository(db_session)
+    AgentRepository(db_session)
+    ItemRepository(db_session)
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
         workspace_path=".agent_data",
@@ -404,22 +381,17 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=QueuedInputRepository(db_session),
-        runner=object(),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry({}),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=QueuedInputRepository(db_session),
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     user = chat_service._ensure_default_user()
@@ -442,10 +414,10 @@ def test_load_session_creates_workspace_layout_for_new_session(db_session: Sessi
 
 
 def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Path) -> None:
-    user_repository = UserRepository(db_session)
+    UserRepository(db_session)
     session_repository = SessionRepository(db_session)
-    agent_repository = AgentRepository(db_session)
-    item_repository = ItemRepository(db_session)
+    AgentRepository(db_session)
+    ItemRepository(db_session)
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
         workspace_path=".agent_data",
@@ -468,22 +440,17 @@ def test_load_session_rejects_foreign_session(db_session: Session, tmp_path: Pat
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=QueuedInputRepository(db_session),
-        runner=object(),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry({}),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=QueuedInputRepository(db_session),
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     now = utcnow()
@@ -512,7 +479,7 @@ def test_resolve_session_root_agent_preserves_existing_identity_without_explicit
     user_repository = UserRepository(db_session)
     session_repository = SessionRepository(db_session)
     agent_repository = AgentRepository(db_session)
-    item_repository = ItemRepository(db_session)
+    ItemRepository(db_session)
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
         workspace_path=".agent_data",
@@ -535,22 +502,17 @@ def test_resolve_session_root_agent_preserves_existing_identity_without_explicit
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=QueuedInputRepository(db_session),
-        runner=object(),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry({}),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=QueuedInputRepository(db_session),
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     now = utcnow()
@@ -631,42 +593,17 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
     db_session: Session,
     tmp_path: Path,
 ) -> None:
-    user_repository = UserRepository(db_session)
+    UserRepository(db_session)
     session_repository = SessionRepository(db_session)
-    agent_repository = AgentRepository(db_session)
+    AgentRepository(db_session)
     item_repository = ItemRepository(db_session)
-    queued_input_repository = QueuedInputRepository(db_session)
+    QueuedInputRepository(db_session)
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
         workspace_path=".agent_data",
     )
     capturing_provider = CapturingProvider(
         [ProviderResponse(output=[ProviderTextOutputItem(text="Odczytalem zalacznik.")])]
-    )
-    runner = Runner(
-        agent_repository=agent_repository,
-        session_repository=session_repository,
-        item_repository=item_repository,
-        user_repository=user_repository,
-        tool_registry=ToolRegistry(tools=[]),
-        mcp_manager=FakeMcpManager(),
-        provider_registry=ProviderRegistry({"openrouter": capturing_provider}),
-        event_bus=EventBus(),
-        agent_loader=FakeAgentLoader(
-            root_agent=LoadedAgent(
-                agent_name="manfred",
-                model="openrouter:test-model",
-                tools=[],
-                system_prompt="Pomagaj uzytkownikowi.",
-            )
-        ),
-        max_delegation_depth=8,
-        max_turns=10,
-        message_queue=SessionMessageQueue(
-            queued_input_repository=queued_input_repository,
-            item_repository=item_repository,
-        ),
-        filesystem_service=FakeFilesystemService(),
     )
     chat_service = ChatService(
         session=db_session,
@@ -677,6 +614,8 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
             LANGFUSE_ENABLED=False,
+            MAX_DELEGATION_DEPTH=8,
+            MAX_TURNS=10,
         ),
         agent_loader=FakeAgentLoader(
             root_agent=LoadedAgent(
@@ -686,22 +625,17 @@ async def test_process_chat_persists_attachments_and_maps_them_to_provider_input
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=queued_input_repository,
-        runner=runner,
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry({"openrouter": capturing_provider}),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=queued_input_repository,
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     response = await chat_service.process_chat(
@@ -876,33 +810,6 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
             accepted_at=utcnow(),
         )
     )
-    runner = Runner(
-        agent_repository=agent_repository,
-        session_repository=session_repository,
-        item_repository=item_repository,
-        user_repository=user_repository,
-        tool_registry=ToolRegistry(tools=[]),
-        mcp_manager=FakeMcpManager(),
-        provider_registry=ProviderRegistry(
-            {"openrouter": FakeProvider([ProviderResponse(output=[ProviderTextOutputItem(text="Nowa odpowiedz")])])}
-        ),
-        event_bus=EventBus(),
-        agent_loader=FakeAgentLoader(
-            root_agent=LoadedAgent(
-                agent_name="manfred",
-                model="openrouter:test-model",
-                tools=[],
-                system_prompt="Pomagaj uzytkownikowi.",
-            )
-        ),
-        max_delegation_depth=8,
-        max_turns=10,
-        message_queue=SessionMessageQueue(
-            queued_input_repository=queued_input_repository,
-            item_repository=item_repository,
-        ),
-        filesystem_service=FakeFilesystemService(),
-    )
     chat_service = ChatService(
         session=db_session,
         settings=Settings(
@@ -912,6 +819,8 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
             DEFAULT_USER_ID="default-user",
             DEFAULT_USER_NAME="Default User",
             LANGFUSE_ENABLED=False,
+            MAX_DELEGATION_DEPTH=8,
+            MAX_TURNS=10,
         ),
         agent_loader=FakeAgentLoader(
             root_agent=LoadedAgent(
@@ -921,22 +830,19 @@ async def test_process_edit_rewinds_history_and_clears_pending_queue(
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=queued_input_repository,
-        runner=runner,
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry(
+            {"openrouter": FakeProvider([ProviderResponse(output=[ProviderTextOutputItem(text="Nowa odpowiedz")])])}
+        ),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=queued_input_repository,
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     response = await chat_service.process_edit(
@@ -965,7 +871,7 @@ async def test_process_queue_persists_pending_input_for_waiting_root_agent(
     user_repository = UserRepository(db_session)
     session_repository = SessionRepository(db_session)
     agent_repository = AgentRepository(db_session)
-    item_repository = ItemRepository(db_session)
+    ItemRepository(db_session)
     queued_input_repository = QueuedInputRepository(db_session)
     workspace_layout_service = WorkspaceLayoutService(
         repo_root=tmp_path,
@@ -1033,22 +939,17 @@ async def test_process_queue_persists_pending_input_for_waiting_root_agent(
                 system_prompt="Pomagaj uzytkownikowi.",
             )
         ),
-        user_repository=user_repository,
-        session_repository=session_repository,
-        agent_repository=agent_repository,
-        item_repository=item_repository,
-        queued_input_repository=queued_input_repository,
-        runner=object(),  # type: ignore[arg-type]
+        tool_registry=ToolRegistry(tools=[]),
+        mcp_manager=FakeMcpManager(),
+        provider_registry=ProviderRegistry({}),
+        event_bus=EventBus(),
         active_run_registry=ActiveRunRegistry(),
         workspace_layout_service=workspace_layout_service,
         attachment_storage_service=ChatAttachmentStorageService(
             workspace_layout_service=workspace_layout_service,
             max_file_size=1024 * 1024,
         ),
-        message_queue=SessionMessageQueue(
-            queued_input_repository=queued_input_repository,
-            item_repository=item_repository,
-        ),
+        filesystem_service=FakeFilesystemService(),
     )
 
     response = await chat_service.process_queue(

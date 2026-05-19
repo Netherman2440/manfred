@@ -30,12 +30,18 @@ def create_app() -> FastAPI:
         unsubscribe_langfuse = (
             langfuse_subscriber.subscribe(event_bus) if langfuse_subscriber is not None else (lambda: None)
         )
+        observer_subscriber = container.observer_subscriber()
+        reflector_subscriber = container.reflector_subscriber()
+        unsubscribe_observer = observer_subscriber.subscribe(event_bus)
+        unsubscribe_reflector = reflector_subscriber.subscribe(event_bus)
         try:
             await mcp_manager.start()
             yield
         finally:
             await mcp_manager.close()
             await http_client.aclose()
+            unsubscribe_reflector()
+            unsubscribe_observer()
             unsubscribe_langfuse()
             if langfuse_subscriber is not None:
                 langfuse_subscriber.shutdown()
