@@ -73,7 +73,13 @@ class ReflectorSubscriber:
         memory_path = self._memory_path_resolver(user_id, event.agent_name)
         try:
             content = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
-        except OSError:
+        except OSError as exc:
+            logger.warning(
+                "Failed to read memory file for agent %s (session %s): %s",
+                event.agent_name,
+                event.ctx.session_id,
+                exc,
+            )
             return
         if not content:
             return
@@ -100,9 +106,25 @@ class ReflectorSubscriber:
                     event.ctx.session_id,
                 )
                 return
+            if not reflected or not reflected.strip():
+                logger.warning(
+                    "Reflector produced empty result for agent %s (session %s); skipping write",
+                    event.agent_name,
+                    event.ctx.session_id,
+                )
+                return
+            new_count = self._token_counter.count_text(reflected)
+            if new_count >= token_count:
+                logger.warning(
+                    "Reflector did not reduce token count for agent %s (session %s): %d -> %d; skipping write",
+                    event.agent_name,
+                    event.ctx.session_id,
+                    token_count,
+                    new_count,
+                )
+                return
             memory_path.parent.mkdir(parents=True, exist_ok=True)
             memory_path.write_text(reflected.strip() + "\n", encoding="utf-8")
-            new_count = self._token_counter.count_text(reflected)
             self._event_bus.emit(
                 ReflectionSuccessEvent(
                     ctx=event.ctx,

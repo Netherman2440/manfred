@@ -17,7 +17,7 @@ Stan obecny backendu:
 - `EventBus` jest synchroniczny ([event_bus.py](../../src/app/events/event_bus.py)) z 13 typami eventow,
 - najblizszy odpowiednik `graph.completed` z heyfibo to `TurnCompletedEvent` ([runner.py](../../src/app/runtime/runner.py) linia 193, 398) emitowany po kazdym turnie agenta,
 - `Runner._build_provider_request(...)` ([runner.py](../../src/app/runtime/runner.py) linia 1572) komponuje system prompt z `loaded_agent.system_prompt`,
-- `WorkspaceLayoutService` ([workspace_layout.py](../../src/app/services/filesystem/workspace_layout.py)) scopuje filesystem per `<user_key>/<mount>`,
+- `WorkspaceLayoutService` ([service.py](../../src/app/services/workspace_layout/service.py)) scopuje filesystem per `<user_key>/<mount>`,
 - `FilesystemService` ma mount `agents/` w FS_ROOTS - czyli `.agent_data/<user>/agents/<name>/` jest writable przez `write_file` tool,
 - `ItemRepository` ([db/](../../src/app/db/)) trzyma items per AgentRun (kolumna `agent_id`),
 - domena `Session` ([domain/session.py](../../src/app/domain/session.py)) ma `id`, `user_id`, `root_agent_id`, `status`, `created_at`, `updated_at`,

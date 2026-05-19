@@ -1,5 +1,4 @@
 from collections.abc import Iterator
-from datetime import timedelta
 
 import pytest
 from dependency_injector import providers
@@ -44,7 +43,7 @@ def _seed_session(test_session_factory: sessionmaker, *, session_id: str, user_i
                 status=SessionStatus.ACTIVE,
                 title=f"title-{session_id}",
                 created_at=now,
-                updated_at=now - timedelta(seconds=1),
+                updated_at=now,
             )
         )
         AgentRepository(db).save(

@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     OBSERVATIONAL_MEMORY_ENABLED: bool = False
     TOKENS_TO_OBSERVE: int = 30_000
     TOKENS_TO_REFLECT: int = 40_000
-    OBSERVER_LLM_MODEL: str = "openai/gpt-5-mini"
+    OBSERVER_LLM_MODEL: str = "openai/gpt-4o-mini"
 
     def mount_names(self) -> list[str]:
         return [name.strip().strip("/") for name in self.FS_MOUNTS.split(",") if name.strip()]

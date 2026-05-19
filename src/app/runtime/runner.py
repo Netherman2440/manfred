@@ -1623,13 +1623,12 @@ class Runner:
             return None
         try:
             path = self.memory_path_resolver(context.session.user_id, agent_name)
-        except Exception:
-            return None
-        if path is None or not path.exists():
-            return None
-        try:
+            if path is None or not path.exists():
+                return None
             content = path.read_text(encoding="utf-8")
         except OSError:
+            return None
+        except Exception:
             return None
         stripped = content.strip()
         return stripped or None
