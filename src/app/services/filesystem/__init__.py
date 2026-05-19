@@ -15,11 +15,6 @@ from app.services.filesystem.types import (
     FilesystemToolError,
     FilesystemWriteRequest,
 )
-from app.services.filesystem.workspace_layout import (
-    SessionWorkspaceLayout,
-    UserWorkspaceLayout,
-    WorkspaceLayoutService,
-)
 
 __all__ = [
     "AgentFilesystemService",
@@ -34,9 +29,6 @@ __all__ = [
     "FilesystemSubject",
     "FilesystemToolError",
     "FilesystemWriteRequest",
-    "SessionWorkspaceLayout",
-    "UserWorkspaceLayout",
     "WorkspaceScopedFilesystemPolicy",
-    "WorkspaceLayoutService",
     "build_mounts",
 ]

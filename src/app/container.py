@@ -16,7 +16,7 @@ from app.services.agent_loader import AgentLoader
 from app.services.agent_template_service import AgentTemplateService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
-from app.services.filesystem import AgentFilesystemService, WorkspaceLayoutService
+from app.services.filesystem import AgentFilesystemService
 from app.services.lock_service import LockService
 from app.services.memory import (
     MemoryPathResolver,
@@ -28,6 +28,7 @@ from app.services.model_catalog_service import ModelCatalogService
 from app.services.session_query_service import SessionQueryService
 from app.services.tiktokenizer import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
+from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.definitions.aidevs import (
     build_fetch_aidevs_data_tool,
     build_submit_task_tool,

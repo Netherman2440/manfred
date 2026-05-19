@@ -2,13 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.filesystem import (
-    AgentFilesystemService,
-    FilesystemPathResolver,
-    WorkspaceLayoutService,
-    WorkspaceScopedFilesystemPolicy,
-    build_mounts,
-)
+from app.services.filesystem import AgentFilesystemService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 
 class FakeFilesystemService:
@@ -29,13 +24,9 @@ def build_fake_filesystem_service(tmp_path: Path) -> AgentFilesystemService:
         workspace_path=".agent_data",
         agent_mount_names=["agents", "shared"],
     )
-    mounts = build_mounts(mount_names=["agents", "shared"], fs_root=fs_root)
     return AgentFilesystemService(
-        path_resolver=FilesystemPathResolver(mounts),
-        access_policy=WorkspaceScopedFilesystemPolicy(
-            workspace_layout_service=workspace_layout_service,
-            fs_root=fs_root,
-        ),
+        workspace_layout_service=workspace_layout_service,
+        mount_names=["agents", "shared"],
         max_file_size=1024 * 1024,
     )
 

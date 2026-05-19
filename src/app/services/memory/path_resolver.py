@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from app.domain.repositories import UserRepository
-from app.services.filesystem import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 
 class MemoryPathResolver:
@@ -26,8 +26,8 @@ class MemoryPathResolver:
             user_name = user.name if user is not None else None
         finally:
             sa_session.close()
-        layout = self._workspace_layout_service.resolve_user_workspace(
+        return self._workspace_layout_service.resolve_agent_memory_path(
             user_id=user_id,
             user_name=user_name,
+            agent_name=agent_name,
         )
-        return layout.root / "agents" / agent_name / "memory.md"

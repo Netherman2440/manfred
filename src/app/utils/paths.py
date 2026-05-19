@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.services.filesystem import WorkspaceLayoutService
+    from app.services.workspace_layout import WorkspaceLayoutService
 
 
 def get_repo_root() -> Path:

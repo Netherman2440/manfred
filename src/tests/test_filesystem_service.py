@@ -14,9 +14,9 @@ from app.services.filesystem import (
     FilesystemSubject,
     FilesystemToolError,
     FilesystemWriteRequest,
-    WorkspaceLayoutService,
     build_mounts,
 )
+from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.definitions.filesystem import build_read_file_tool
 
 

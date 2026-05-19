@@ -13,7 +13,7 @@ from app.db.models import AgentModel
 from app.db.models.session import SessionModel
 from app.domain import User
 from app.services.agent_loader import AgentLoader, AgentTemplate, render_agent_frontmatter
-from app.services.filesystem import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 logger = logging.getLogger(__name__)
 

@@ -7,12 +7,12 @@ from app.container import Container
 from app.db.base import utcnow
 from app.domain.repositories import UserRepository
 from app.domain.user import User
-from app.services.filesystem import WorkspaceLayoutService
 from app.services.session_query_service import (
     SessionQueryIntegrityError,
     SessionQueryNotFoundError,
     SessionQueryService,
 )
+from app.services.workspace_layout import WorkspaceLayoutService
 
 router = APIRouter(prefix="/users", tags=["users"])
 

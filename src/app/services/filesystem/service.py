@@ -21,7 +21,7 @@ from app.services.filesystem.types import (
     FilesystemWriteRequest,
     ResolvedFilesystemPath,
 )
-from app.services.filesystem.workspace_layout import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 DEFAULT_IGNORED_NAMES = {
     ".git",
@@ -48,7 +48,6 @@ class AgentFilesystemService:
         self.path_resolver = FilesystemPathResolver(mounts)
         self.access_policy = WorkspaceScopedFilesystemPolicy(
             workspace_layout_service=workspace_layout_service,
-            fs_root=fs_root,
         )
         self.max_file_size = max_file_size
         self.exclude_patterns = self._normalize_patterns(exclude_patterns)

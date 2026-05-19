@@ -62,8 +62,9 @@ from app.runtime.runner import Runner
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment, StoredAttachment
-from app.services.filesystem import AgentFilesystemService, WorkspaceLayoutService
+from app.services.filesystem import AgentFilesystemService
 from app.services.memory import ObserveUseCase
+from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.registry import ToolRegistry
 
 

@@ -45,12 +45,12 @@ from app.providers.types import (
     ProviderUsage,
 )
 from app.runtime.background_tasks import BackgroundTaskRegistry
-from app.services.filesystem import WorkspaceLayoutService
 from app.services.lock_service import LockService
 from app.services.memory.observe_use_case import ObserveUseCase
 from app.services.memory.service import MemoryService
 from app.services.memory.token_counter import MemoryTokenCounter
 from app.services.tiktokenizer import TiktokenizerService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 
 class _FakeProvider:

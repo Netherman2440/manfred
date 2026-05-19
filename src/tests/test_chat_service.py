@@ -44,7 +44,7 @@ from app.runtime.cancellation import ActiveRunRegistry
 from app.services.agent_loader import LoadedAgent
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment
 from app.services.chat_service import ChatService, ChatServiceValidationError, ResolvedAgentConfig
-from app.services.filesystem import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.delegate import delegate_tool
 from app.tools.registry import ToolRegistry
