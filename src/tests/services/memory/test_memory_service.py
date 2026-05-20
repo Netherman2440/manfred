@@ -63,11 +63,7 @@ async def test_observe_includes_existing_in_human_message() -> None:
     await service.observe(existing_observations="prior", items=[])
 
     assert provider.last_request is not None
-    contents = [
-        item.content
-        for item in provider.last_request.input
-        if getattr(item, "content", None)
-    ]
+    contents = [item.content for item in provider.last_request.input if getattr(item, "content", None)]
     assert any("<existing-observations>" in content for content in contents)
     assert any("prior" in content for content in contents)
 

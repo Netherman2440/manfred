@@ -74,11 +74,7 @@ class ReflectorSubscriber:
         lock = await self._lock_service.get(user_id, event.agent_name)
         async with lock:
             try:
-                content = (
-                    memory_path.read_text(encoding="utf-8")
-                    if memory_path.exists()
-                    else ""
-                )
+                content = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
             except OSError as exc:
                 logger.warning(
                     "Failed to read memory file for agent %s (session %s): %s",
