@@ -67,29 +67,33 @@ class ReflectorSubscriber:
         self._background_task_registry.schedule(self._reflect_async(event))
 
     async def _reflect_async(self, event: ObservationSuccessEvent) -> None:
-        user_id = self._resolve_user_id(event.ctx.session_id)
+        user_id = await asyncio.to_thread(self._resolve_user_id, event.ctx.session_id)
         if user_id is None:
             return
         memory_path = self._memory_path_resolver(user_id, event.agent_name)
-        try:
-            content = memory_path.read_text(encoding="utf-8") if memory_path.exists() else ""
-        except OSError as exc:
-            logger.warning(
-                "Failed to read memory file for agent %s (session %s): %s",
-                event.agent_name,
-                event.ctx.session_id,
-                exc,
-            )
-            return
-        if not content:
-            return
-
-        token_count = self._token_counter.count_text(content)
-        if token_count < self._settings.TOKENS_TO_REFLECT:
-            return
-
         lock = await self._lock_service.get(user_id, event.agent_name)
         async with lock:
+            try:
+                content = (
+                    memory_path.read_text(encoding="utf-8")
+                    if memory_path.exists()
+                    else ""
+                )
+            except OSError as exc:
+                logger.warning(
+                    "Failed to read memory file for agent %s (session %s): %s",
+                    event.agent_name,
+                    event.ctx.session_id,
+                    exc,
+                )
+                return
+            if not content:
+                return
+
+            token_count = self._token_counter.count_text(content)
+            if token_count < self._settings.TOKENS_TO_REFLECT:
+                return
+
             self._event_bus.emit(
                 ReflectionStartedEvent(
                     ctx=event.ctx,
@@ -123,8 +127,16 @@ class ReflectorSubscriber:
                     new_count,
                 )
                 return
-            memory_path.parent.mkdir(parents=True, exist_ok=True)
-            memory_path.write_text(reflected.strip() + "\n", encoding="utf-8")
+            try:
+                memory_path.parent.mkdir(parents=True, exist_ok=True)
+                memory_path.write_text(reflected.strip() + "\n", encoding="utf-8")
+            except OSError:
+                logger.exception(
+                    "Failed to persist reflected memory for agent %s (session %s)",
+                    event.agent_name,
+                    event.ctx.session_id,
+                )
+                return
             self._event_bus.emit(
                 ReflectionSuccessEvent(
                     ctx=event.ctx,

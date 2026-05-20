@@ -1628,8 +1628,6 @@ class Runner:
             content = path.read_text(encoding="utf-8")
         except OSError:
             return None
-        except Exception:
-            return None
         stripped = content.strip()
         return stripped or None
 

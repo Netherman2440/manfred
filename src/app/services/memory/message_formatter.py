@@ -48,7 +48,9 @@ def format_items_for_memory(items: list[Item]) -> str:
 
         if item.type == ItemType.FUNCTION_CALL_OUTPUT:
             name = item.name or ""
-            output = item.output or ""
+            output = (item.output or "").strip()
+            if not output:
+                continue
             lines.append(f"{prefix}Tool Result {name}: {output}")
             continue
 

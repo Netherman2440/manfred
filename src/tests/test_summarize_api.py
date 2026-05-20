@@ -112,8 +112,10 @@ def client_with_flag_off() -> Iterator[tuple[TestClient, sessionmaker]]:
     try:
         yield client, factory
     finally:
-        client.__exit__(None, None, None)
-        _reset_overrides()
+        try:
+            client.__exit__(None, None, None)
+        finally:
+            _reset_overrides()
 
 
 @pytest.fixture
@@ -122,8 +124,10 @@ def client_with_flag_on() -> Iterator[tuple[TestClient, sessionmaker]]:
     try:
         yield client, factory
     finally:
-        client.__exit__(None, None, None)
-        _reset_overrides()
+        try:
+            client.__exit__(None, None, None)
+        finally:
+            _reset_overrides()
 
 
 def test_summarize_returns_503_when_flag_disabled(

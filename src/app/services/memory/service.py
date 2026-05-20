@@ -46,6 +46,8 @@ class MemoryService(BaseMemoryService):
             )
         )
         content = _extract_text(response)
+        if not content.strip():
+            raise ValueError("Observer returned empty output")
         return ObservationResult(
             observations=_extract_tag(content, "observations") or content,
             current_task=_extract_tag(content, "current-task"),
@@ -60,6 +62,8 @@ class MemoryService(BaseMemoryService):
             )
         )
         content = _extract_text(response)
+        if not content.strip():
+            raise ValueError("Reflector returned empty output")
         return _extract_tag(content, "observations") or content
 
 

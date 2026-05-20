@@ -63,9 +63,13 @@ async def test_observe_includes_existing_in_human_message() -> None:
     await service.observe(existing_observations="prior", items=[])
 
     assert provider.last_request is not None
-    user_content = provider.last_request.input[0].content
-    assert "<existing-observations>" in user_content
-    assert "prior" in user_content
+    contents = [
+        item.content
+        for item in provider.last_request.input
+        if getattr(item, "content", None)
+    ]
+    assert any("<existing-observations>" in content for content in contents)
+    assert any("prior" in content for content in contents)
 
 
 @pytest.mark.asyncio

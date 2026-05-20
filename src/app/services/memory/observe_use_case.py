@@ -102,24 +102,6 @@ class ObserveUseCase:
             raise ValueError(f"Agent {agent_run_id} has no agent_name; observation not supported.")
 
         is_root_agent = agent.id == session.root_agent_id
-        cursor_item_id = session.last_observed_item_id if is_root_agent else None
-        unobserved = self._collect_unobserved(
-            item_repository=item_repository,
-            agent_run_id=agent_run_id,
-            cursor_item_id=cursor_item_id,
-        )
-
-        if not unobserved:
-            return ObserveOutcome(result=None, status="no_unobserved")
-
-        token_count = self._token_counter.count_items(unobserved)
-        if not force and token_count < self._tokens_to_observe:
-            return ObserveOutcome(
-                result=None,
-                status="below_threshold",
-                detail=f"{token_count} < {self._tokens_to_observe}",
-            )
-
         ctx = build_event_context(agent, agent.trace_id or "")
         lock = await self._lock_service.get(session.user_id, agent.agent_name)
 
@@ -134,6 +116,24 @@ class ObserveUseCase:
             return ObserveOutcome(result=None, status="locked")
 
         async with lock:
+            cursor_item_id = session.last_observed_item_id if is_root_agent else None
+            unobserved = self._collect_unobserved(
+                item_repository=item_repository,
+                agent_run_id=agent_run_id,
+                cursor_item_id=cursor_item_id,
+            )
+
+            if not unobserved:
+                return ObserveOutcome(result=None, status="no_unobserved")
+
+            token_count = self._token_counter.count_items(unobserved)
+            if not force and token_count < self._tokens_to_observe:
+                return ObserveOutcome(
+                    result=None,
+                    status="below_threshold",
+                    detail=f"{token_count} < {self._tokens_to_observe}",
+                )
+
             self._event_bus.emit(
                 ObservationStartedEvent(
                     ctx=ctx,
@@ -167,6 +167,7 @@ class ObserveUseCase:
                         detail=str(exc),
                     )
                 )
+                sa_session.rollback()
                 return ObserveOutcome(result=None, status="error", detail=str(exc))
 
             preview = result.observations[:_PREVIEW_LIMIT]
