@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sqlalchemy.orm import Session as DbSession
@@ -141,6 +141,7 @@ class AgentTemplateService:
         return self._to_detail(template)
 
     def create_template(self, user: User, payload: AgentTemplateInput) -> AgentTemplateDetail:
+        payload = self._normalize_model(payload)
         self._validate_payload(payload)
 
         agents_dir = self._agents_dir(user)
@@ -160,6 +161,7 @@ class AgentTemplateService:
         if payload.name != name:
             raise AgentTemplateInvalid("name", "Rename not supported — name must match URL path parameter.")
 
+        payload = self._normalize_model(payload)
         self._validate_payload(payload)
 
         agents_dir = self._agents_dir(user)
@@ -216,6 +218,16 @@ class AgentTemplateService:
             )
         if name in self.RESERVED_NAMES:
             raise AgentTemplateInvalid("name", f"Name '{name}' is reserved.")
+
+    @staticmethod
+    def _normalize_model(payload: AgentTemplateInput) -> AgentTemplateInput:
+        model = payload.model
+        if model is None:
+            return payload
+        model = model.strip()
+        if not model or ":" in model:
+            return payload
+        return replace(payload, model=f"openrouter:{model}")
 
     def _validate_payload(self, payload: AgentTemplateInput) -> None:
         self._validate_name(payload.name)

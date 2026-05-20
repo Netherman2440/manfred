@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,8 @@ from app.services.filesystem import AgentFilesystemService
 from app.services.memory import ObserveUseCase
 from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceValidationError(ValueError):
@@ -205,6 +208,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat execution failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -255,6 +259,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat streaming failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -306,6 +311,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat edit failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -360,6 +366,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat edit streaming failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:

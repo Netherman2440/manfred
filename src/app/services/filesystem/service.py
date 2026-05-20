@@ -822,6 +822,16 @@ class AgentFilesystemService:
         action: str,
         lines: Any | None,
     ) -> str:
+        if action == "append":
+            if lines is not None:
+                raise FilesystemToolError("'append' action must not be combined with 'lines'.")
+            addition = content or ""
+            if not addition:
+                return current_text
+            separator = "" if not current_text or current_text.endswith("\n") else "\n"
+            trailing = "" if addition.endswith("\n") else "\n"
+            return f"{current_text}{separator}{addition}{trailing}"
+
         if action == "replace" and lines is None:
             return content or ""
 

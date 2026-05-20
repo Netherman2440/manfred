@@ -31,11 +31,13 @@ from app.services.tool_catalog_service import ToolCatalogService
 from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.definitions.aidevs import (
     build_fetch_aidevs_data_tool,
+    build_mail_api_tool,
     build_submit_task_tool,
 )
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
 from app.tools.definitions.delegate import delegate_tool
+from app.tools.definitions.message import message_tool
 from app.tools.definitions.filesystem import (
     build_manage_file_tool,
     build_read_file_tool,
@@ -54,12 +56,14 @@ def get_tools(
         calculator_tool,
         delegate_tool,
         ask_user_tool,
+        message_tool,
         build_read_file_tool(filesystem_service),
         build_search_file_tool(filesystem_service),
         build_write_file_tool(filesystem_service),
         build_manage_file_tool(filesystem_service),
         build_submit_task_tool(settings),
         build_fetch_aidevs_data_tool(settings),
+        build_mail_api_tool(settings),
     ]
 
 
@@ -151,7 +155,7 @@ class Container(containers.DeclarativeContainer):
     )
     provider_registry = providers.Singleton(
         ProviderRegistry,
-        providers={"openrouter": openrouter_provider},
+        providers=providers.Dict(openrouter=openrouter_provider),
     )
     mcp_config_path = providers.Callable(
         resolve_relative_path,
