@@ -16,9 +16,19 @@ class FunctionToolDefinition:
     type: Literal["function"] = "function"
 
 
+SearchContextSize: TypeAlias = Literal["low", "medium", "high"]
+
+
 @dataclass(slots=True, frozen=True)
 class WebSearchToolDefinition:
+    name: Literal["web_search"] = "web_search"
     type: Literal["web_search"] = "web_search"
+    engine: str = "exa"
+    max_results: int = 5
+    max_total_results: int = 20
+    search_context_size: SearchContextSize = "medium"
+    allowed_domains: tuple[str, ...] = ("wikipedia.org", "hub.ag3nts.org")
+    excluded_domains: tuple[str, ...] = ("reddit.com",)
 
 
 ToolDefinition: TypeAlias = FunctionToolDefinition | WebSearchToolDefinition

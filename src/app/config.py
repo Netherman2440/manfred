@@ -44,7 +44,7 @@ class Settings(BaseSettings):
 
     # openai TODO
 
-    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_ENABLED: bool = True
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"

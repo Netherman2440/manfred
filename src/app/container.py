@@ -37,13 +37,14 @@ from app.tools.definitions.aidevs import (
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
 from app.tools.definitions.delegate import delegate_tool
-from app.tools.definitions.message import message_tool
 from app.tools.definitions.filesystem import (
     build_manage_file_tool,
     build_read_file_tool,
     build_search_file_tool,
     build_write_file_tool,
 )
+from app.tools.definitions.message import message_tool
+from app.tools.definitions.web_search import web_search_tool
 from app.tools.registry import ToolRegistry
 from app.utils.paths import default_user_workspace_path, get_repo_root, resolve_relative_path
 
@@ -57,6 +58,7 @@ def get_tools(
         delegate_tool,
         ask_user_tool,
         message_tool,
+        web_search_tool,
         build_read_file_tool(filesystem_service),
         build_search_file_tool(filesystem_service),
         build_write_file_tool(filesystem_service),
