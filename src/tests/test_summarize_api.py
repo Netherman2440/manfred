@@ -90,6 +90,7 @@ def _make_client(*, observational_memory_enabled: bool) -> tuple[TestClient, ses
     container.session_factory.override(providers.Object(factory))
     container.mcp_manager.override(providers.Object(StubMcpManager()))
     container.langfuse_subscriber.override(providers.Object(None))
+    container.reset_singletons()
 
     app = create_app()
     client = TestClient(app)

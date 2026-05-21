@@ -4,10 +4,13 @@
 
 Repo-local celem backendu jest dostarczenie pelnego asynchronicznego pipeline'u obserwacji i refleksji dla agentow Manfreda:
 - subscribery `Observer` i `Reflector` reagujace na eventy z `EventBus`,
-- prompt injection memory.md + `current-task` + `suggested-response` w `Runner._build_provider_request`,
+- prompt injection memory.md + `current-task` w `Runner._build_provider_request`,
 - endpoint `POST /api/v1/chat/sessions/{session_id}/summarize` do recznego wyzwalania,
-- nowy typ Item `OBSERVATION` z polem `state` do prezentacji w UI,
+- nowy typ Item `OBSERVATION` do prezentacji w UI,
 - feature flag `OBSERVATIONAL_MEMORY_ENABLED` jako kill-switch.
+
+> Implementation note: `suggested_response` i `Item.state` byly poczatkowo planowane, ale zostaly de-scope'owane podczas implementacji.
+> Migracja `b3f8a2c91d4e_observational_memory.py` dodaje tylko `Session.last_observed_item_id` i `Session.current_task`.
 
 Ta specyfikacja jest self-contained i opisuje backendowy zakres bez potrzeby czytania frontendu.
 
@@ -15,13 +18,13 @@ Ta specyfikacja jest self-contained i opisuje backendowy zakres bez potrzeby czy
 
 Stan obecny backendu:
 - `EventBus` jest synchroniczny ([event_bus.py](../../src/app/events/event_bus.py)) z 13 typami eventow,
-- najblizszy odpowiednik `graph.completed` z heyfibo to `TurnCompletedEvent` ([runner.py](../../src/app/runtime/runner.py) linia 193, 398) emitowany po kazdym turnie agenta,
-- `Runner._build_provider_request(...)` ([runner.py](../../src/app/runtime/runner.py) linia 1572) komponuje system prompt z `loaded_agent.system_prompt`,
+- najblizszy odpowiednik `graph.completed` z heyfibo to `TurnCompletedEvent` emitowany przez `Runner` po kazdym turnie agenta,
+- `Runner._build_provider_request(...)` komponuje system prompt z `loaded_agent.system_prompt`,
 - `WorkspaceLayoutService` ([service.py](../../src/app/services/workspace_layout/service.py)) scopuje filesystem per `<user_key>/<mount>`,
 - `FilesystemService` ma mount `agents/` w FS_ROOTS - czyli `.agent_data/<user>/agents/<name>/` jest writable przez `write_file` tool,
 - `ItemRepository` ([db/](../../src/app/db/)) trzyma items per AgentRun (kolumna `agent_id`),
 - domena `Session` ([domain/session.py](../../src/app/domain/session.py)) ma `id`, `user_id`, `root_agent_id`, `status`, `created_at`, `updated_at`,
-- domena `Agent` (AgentRun) ma `parent_id`, `root_agent_id`, `depth` ([runner.py](../../src/app/runtime/runner.py) linia 1348-1353).
+- domena `Agent` (AgentRun) ma `parent_id`, `root_agent_id`, `depth`.
 
 Powod tej zmiany teraz:
 - agenci nie maja zadnej pamieci miedzy turnami poza biezacym kontekstem providera,
@@ -70,7 +73,6 @@ Eventy SSE dodane do pipeline `chat_service.py` (rozszerzenie istniejacych SSE s
 
 `Item` rozszerzony:
 - `ItemType.OBSERVATION` (nowa wartosc enum),
-- pole `state` na `Item` (nullable string, dotyczy tylko OBSERVATION na razie): `in_progress` | `done`,
 - `content` zawiera preview obserwacji (skrocone), `output` zawiera pelny tekst nowych obserwacji.
 
 ### API layer <-> runtime
@@ -79,9 +81,9 @@ Eventy SSE dodane do pipeline `chat_service.py` (rozszerzenie istniejacych SSE s
 - pobiera Session, weryfikuje `Session.user_id == user_id`,
 - liczy `unobserved_items = ItemRepository.get_items_for_agent(session.root_agent_id, after_item_id=session.last_observed_item_id)`,
 - jesli `len(unobserved_items) == 0` -> zwraca 204,
-- jesli lock `(user_id, root_agent.name)` zajety -> tworzy Item OBSERVATION w state `done` z output `"Juz trwa podsumowanie"`, emit `observation.failure(locked)`, zwraca 202,
+- jesli lock `(user_id, root_agent.name)` zajety -> tworzy Item OBSERVATION z output `"Juz trwa podsumowanie"`, emit `observation.failure(locked)`, zwraca 202,
 - inaczej:
-  - tworzy Item OBSERVATION state `in_progress`,
+  - tworzy Item OBSERVATION,
   - `asyncio.create_task(ObserveUseCase.execute(...))` (fire-and-forget),
   - zwraca 202 z item_id.
 
@@ -89,27 +91,27 @@ Eventy SSE dodane do pipeline `chat_service.py` (rozszerzenie istniejacych SSE s
 - acquiruje lock `(user_id, agent_name)` (jesli `force=True` - waitable; inaczej non-blocking i emit failure(locked)),
 - ladowanie istniejacego memory.md przez `FilesystemService.read_file(".agent_data/<user>/agents/<name>/memory.md")` - None gdy brak,
 - liczy `unobserved_items` z `ItemRepository`,
-- jesli `not force and token_count < TOKENS_TO_OBSERVE` -> emit nothing, update item do `done` z output `"Below threshold"` (albo skip itemu calkiem - decyzja w implementacji),
+- jesli `not force and token_count < TOKENS_TO_OBSERVE` -> emit nothing, update item z output `"Below threshold"` (albo skip itemu calkiem - decyzja w implementacji),
 - emit `ObservationStartedEvent`,
-- wola `MemoryService.observe(existing, unobserved_items)` -> `ObservationResult(observations, current_task, suggested_response)`,
+- wola `MemoryService.observe(existing, unobserved_items)` -> `ObservationResult(observations, current_task)`,
 - zapisuje:
   - append do `memory.md` (z separatorem `\n\n`),
-  - update `Session.last_observed_item_id`, `Session.current_task`, `Session.suggested_response` (tylko gdy `agent_run_id == session.root_agent_id`),
-  - update Item OBSERVATION do `state=done`, `output=result.observations`, `content=preview`,
+  - update `Session.last_observed_item_id`, `Session.current_task` (tylko gdy `agent_run_id == session.root_agent_id`),
+  - update Item OBSERVATION z `output=result.observations`, `content=preview`,
 - emit `ObservationSuccessEvent`,
 - release lock.
 
 ### Runtime <-> Providers / Tools / MCP
 
-`Runner._build_provider_request(...)` (runner.py:1572) - rozszerzenie:
+`Runner._build_provider_request(...)` - rozszerzenie:
 - jesli `OBSERVATIONAL_MEMORY_ENABLED=False` -> bez zmian,
 - inaczej, dla biezacego AgentRuna:
   - resolve sciezka memory.md przez `WorkspaceLayoutService.resolve_user_workspace(user_id).root / "agents" / agent_name / "memory.md"`,
   - jesli plik istnieje:
     - czytaj zawartosc,
     - skomponuj `system_message_with_memory = system_prompt + "\n\n" + memory_log_prompt(observations=content)`,
-    - jesli AgentRun jest root_agentem sesji i `Session.current_task` lub `Session.suggested_response` niepuste:
-      - append `<current-task>...</current-task>\n<suggested-response>...</suggested-response>` do system_message,
+    - jesli AgentRun jest root_agentem sesji i `Session.current_task` niepusta:
+      - append `<current-task>...</current-task>` do system_message,
     - dodaj `memory_log_continuation()` jako user-role message z `<system-reminder>` PRZED ostatnia user message,
   - jesli plik nie istnieje - bez zmian.
 
@@ -119,12 +121,12 @@ Eventy SSE dodane do pipeline `chat_service.py` (rozszerzenie istniejacych SSE s
   - z `existing`: `<existing-observations>\n{existing}\n</existing-observations>\n\n<new-messages>\n{formatted}\n</new-messages>`,
   - bez `existing`: `{formatted}`,
 - wola providera (osobny client z `OBSERVER_LLM_MODEL`) z system message `observe_prompt()`,
-- parsuje response: tagi `<observations>`, `<current-task>`, `<suggested-response>` regex,
-- zwraca `ObservationResult(observations, current_task, suggested_response)`.
+- parsuje response: tagi `<observations>`, `<current-task>` regex,
+- zwraca `ObservationResult(observations, current_task)`.
 
 `MemoryService.reflect(observations) -> str`:
 - wola providera z system message `reflect_prompt()` i human message `observations`,
-- zwraca pelny content (oczekiwany jest blok `<observations>...</observations>` plus opcjonalnie `<current-task>` i `<suggested-response>` - reflector moze tez aktualizowac te pola, decyzja: TYLKO observations sa zapisywane do memory.md, current_task/suggested_response z reflectora sa zapisywane do Session jesli sa).
+- zwraca pelny content (oczekiwany jest blok `<observations>...</observations>` plus opcjonalnie `<current-task>` - reflector moze tez aktualizowac to pole, decyzja: TYLKO observations sa zapisywane do memory.md, current_task z reflectora jest zapisywany do Session jesli jest).
 
 Filesystem + lock:
 - `dict[tuple[str, str], asyncio.Lock]` w `MemoryLockRegistry` (nowa klasa, singleton w containerze) - klucz `(user_id, agent_name)`,
@@ -133,11 +135,9 @@ Filesystem + lock:
 
 ### Persistence
 
-Migracja Alembic `XXXX_observational_memory.py`:
+Migracja Alembic `b3f8a2c91d4e_observational_memory.py`:
 - `op.add_column("sessions", sa.Column("last_observed_item_id", sa.String(length=64), nullable=True))` (FK opcjonalny - dla SQLite uproszczone),
 - `op.add_column("sessions", sa.Column("current_task", sa.Text, nullable=True))`,
-- `op.add_column("sessions", sa.Column("suggested_response", sa.Text, nullable=True))`,
-- `op.add_column("items", sa.Column("state", sa.String(length=32), nullable=True))`,
 - enum `ItemType` w SQLite to VARCHAR z check constraint - migracja musi:
   - dropnac stary check constraint,
   - dodac nowy z `OBSERVATION` jako dozwolona wartoscia,
@@ -277,9 +277,9 @@ PR1 (single backend PR):
 
 - po `TurnCompletedEvent` w sesji z unobserved > 30k tokenow plik `<user>/agents/<root_agent>/memory.md` zyskuje nowy blok,
 - `Session.last_observed_item_id` = ostatni Item ID z observacji,
-- `Session.current_task` i `Session.suggested_response` sa wypelnione gdy observer je wyextrahowal,
-- `Item(type=OBSERVATION, state=done)` istnieje w bazie z output pelnych obserwacji,
-- przy nastepnym wywolaniu providera w tej sesji system prompt zawiera memory_log + current_task + suggested_response + continuation,
+- `Session.current_task` jest wypelniony gdy observer go wyextrahowal,
+- `Item(type=OBSERVATION)` istnieje w bazie z output pelnych obserwacji,
+- przy nastepnym wywolaniu providera w tej sesji system prompt zawiera memory_log + current_task + continuation,
 - endpoint `POST /chat/sessions/{id}/summarize`:
   - na sesji bez unobserved zwraca 204,
   - na sesji z unobserved zwraca 202 i obserwacja sie odpala asynchronicznie,
@@ -295,7 +295,7 @@ PR1 (single backend PR):
 - testy jednostkowe (`tests/services/memory/`):
   - `test_token_counter.py` - rozne typy `Item` (MESSAGE z content str, FUNCTION_CALL z arguments_json, FUNCTION_CALL_OUTPUT z output, REASONING),
   - `test_message_formatter.py` - format z timestampem i bez, role mapping, JSON args dla tool calls,
-  - `test_memory_service.py` - mock providera, parsing tagow `<observations>`, `<current-task>`, `<suggested-response>`,
+  - `test_memory_service.py` - mock providera, parsing tagow `<observations>`, `<current-task>`,
   - `test_observe_use_case.py` - 0 unobserved (no-op), below threshold non-force, force=True na 0 unobserved, lock zajety, normalny happy path,
   - `test_observer_subscriber.py` - feature flag off, lock zajety -> emit failure, lock wolny -> schedule task,
   - `test_reflector_subscriber.py` - below/above TOKENS_TO_REFLECT.
@@ -327,7 +327,7 @@ Done:
 Contract:
 - Backend exponuje `POST /chat/sessions/{id}/summarize` z semantyka 202/204/404/503.
 - Backend emituje eventy `observation.started/success/failure` i `reflection.started/success` przez SSE.
-- `Item.type=OBSERVATION` z polem `state` zwracany w `GET /chat/sessions/{id}`.
+- `Item.type=OBSERVATION` zwracany w `GET /chat/sessions/{id}`.
 
 Next role:
 - developer backendowy implementujacy PR1.

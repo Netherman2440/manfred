@@ -225,8 +225,10 @@ class AgentTemplateService:
         if model is None:
             return payload
         model = model.strip()
-        if not model or ":" in model:
-            return payload
+        if not model:
+            return replace(payload, model=model)
+        if ":" in model:
+            return replace(payload, model=model)
         return replace(payload, model=f"openrouter:{model}")
 
     def _validate_payload(self, payload: AgentTemplateInput) -> None:
