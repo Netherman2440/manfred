@@ -3,25 +3,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from dataclasses import dataclass
 
 import tiktoken
 
-logger = logging.getLogger("app.services.tiktokenizer_service")
+from app.services.tiktokenizer.base import BaseTiktokenizer
+from app.services.tiktokenizer.models import TokenCount
+
+logger = logging.getLogger("app.services.tiktokenizer")
 
 DEFAULT_MODEL = "gpt-4o"
 FALLBACK_ENCODING = "o200k_base"
 
 
-@dataclass(frozen=True, slots=True)
-class TokenCount:
-    model: str
-    encoding: str
-    tokens: int
-    chars: int
-
-
-class TiktokenizerService:
+class TiktokenizerService(BaseTiktokenizer):
     def __init__(self, *, default_model: str = DEFAULT_MODEL) -> None:
         self._default_model = default_model
         self._encoding_cache: dict[str, tiktoken.Encoding] = {}

@@ -9,7 +9,7 @@ from app.services.filesystem.types import (
     FilesystemSubject,
     ResolvedFilesystemPath,
 )
-from app.services.filesystem.workspace_layout import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 
 class FilesystemAccessPolicy(Protocol):
@@ -21,10 +21,8 @@ class WorkspaceScopedFilesystemPolicy:
         self,
         *,
         workspace_layout_service: WorkspaceLayoutService,
-        fs_root: Path,
     ) -> None:
         self._workspace_layout_service = workspace_layout_service
-        self._fs_root = fs_root.resolve()
 
     async def authorize(self, request: FilesystemAccessRequest) -> FilesystemAccessDecision:
         target_effective_path: Path | None = None
@@ -90,11 +88,11 @@ class WorkspaceScopedFilesystemPolicy:
         if not subject.user_id and not subject.user_name:
             return False, "Filesystem access requires a user identity.", resolved_path.absolute_path
 
-        user_key = self._workspace_layout_service.resolve_user_workspace_key(
+        scoped_root = self._workspace_layout_service.resolve_user_mount_root(
             user_id=subject.user_id,
             user_name=subject.user_name,
-        )
-        scoped_root = (self._fs_root / user_key / resolved_path.mount.name).resolve()
+            mount_name=resolved_path.mount.name,
+        ).resolve()
         relative = resolved_path.relative_path
         effective_path = scoped_root if relative == relative.parent else scoped_root / relative
         effective_path = effective_path.resolve()

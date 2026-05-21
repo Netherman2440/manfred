@@ -15,6 +15,8 @@ class SessionModel(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     title: Mapped[str | None] = mapped_column(Text, nullable=True)
     workspace_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    last_observed_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_task: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utcnow,

@@ -98,6 +98,8 @@ class Runner:
         max_turns: int,
         message_queue: SessionMessageQueue,
         filesystem_service: AgentFilesystemService,
+        observational_memory_enabled: bool = False,
+        memory_path_resolver: object = None,
     ) -> None:
         self.agent_repository = agent_repository
         self.session_repository = session_repository
@@ -112,6 +114,8 @@ class Runner:
         self.max_turns = max_turns
         self.message_queue = message_queue
         self.filesystem_service = filesystem_service
+        self.observational_memory_enabled = observational_memory_enabled
+        self.memory_path_resolver = memory_path_resolver
 
     async def run_agent(
         self,
@@ -1583,6 +1587,22 @@ class Runner:
         fs_instructions = self.filesystem_service.generate_filesystem_instructions()
         task = (context.agent.config.task or "").strip()
         instructions = f"{task}\n\n{fs_instructions}" if task else fs_instructions
+
+        memory_text = self._load_agent_memory(context)
+        if memory_text:
+            from app.services.memory.prompts import (
+                current_task_block,
+                memory_log_continuation,
+                memory_log_prompt,
+            )
+
+            instructions = f"{instructions}\n\n{memory_log_prompt(observations=memory_text)}"
+            if context.agent.id == context.session.root_agent_id:
+                task_block = current_task_block(current_task=context.session.current_task)
+                if task_block:
+                    instructions = f"{instructions}\n\n{task_block}"
+            request_input = self._insert_memory_continuation(request_input, memory_log_continuation())
+
         request = ProviderRequest(
             model=model,
             instructions=instructions,
@@ -1592,6 +1612,40 @@ class Runner:
             signal=signal,
         )
         return request_input, request
+
+    def _load_agent_memory(self, context: AgentRunContext) -> str | None:
+        if not self.observational_memory_enabled:
+            return None
+        if self.memory_path_resolver is None:
+            return None
+        agent_name = context.agent.agent_name
+        if not agent_name:
+            return None
+        try:
+            path = self.memory_path_resolver(context.session.user_id, agent_name)
+            if path is None or not path.exists():
+                return None
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        stripped = content.strip()
+        return stripped or None
+
+    @staticmethod
+    def _insert_memory_continuation(
+        request_input: list[
+            ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem
+        ],
+        continuation_text: str,
+    ) -> list:
+        last_user_index: int | None = None
+        for index, item in enumerate(request_input):
+            if isinstance(item, ProviderMessageInputItem) and item.role == "user":
+                last_user_index = index
+        if last_user_index is None:
+            return request_input
+        continuation = ProviderMessageInputItem(role="user", content=continuation_text)
+        return request_input[:last_user_index] + [continuation] + request_input[last_user_index:]
 
     @staticmethod
     def _add_usage(total: ProviderUsage, usage: ProviderUsage | None) -> ProviderUsage:

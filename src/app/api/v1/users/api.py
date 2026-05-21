@@ -1,3 +1,5 @@
+import logging
+
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -7,12 +9,14 @@ from app.container import Container
 from app.db.base import utcnow
 from app.domain.repositories import UserRepository
 from app.domain.user import User
-from app.services.filesystem import WorkspaceLayoutService
 from app.services.session_query_service import (
     SessionQueryIntegrityError,
     SessionQueryNotFoundError,
     SessionQueryService,
 )
+from app.services.workspace_layout import WorkspaceLayoutService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -57,6 +61,7 @@ def list_user_sessions(
     try:
         return UserSessionsResponse(data=session_query_service.list_user_sessions(user_id))
     except SessionQueryIntegrityError as exc:
+        logger.exception("list_user_sessions failed for user_id=%s", user_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
@@ -79,6 +84,7 @@ def get_user_session_detail(
     except SessionQueryNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except SessionQueryIntegrityError as exc:
+        logger.exception("get_user_session_detail failed user_id=%s session_id=%s", user_id, session_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),

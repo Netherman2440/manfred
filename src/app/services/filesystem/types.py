@@ -93,7 +93,7 @@ class FilesystemWriteRequest:
     path: str
     operation: Literal["create", "update"]
     content: str | None = None
-    action: Literal["replace", "insert_before", "insert_after", "delete_lines"] = "replace"
+    action: Literal["append", "replace", "insert_before", "insert_after", "delete_lines"] = "append"
     lines: LineSpec = None
     checksum: str | None = None
     dry_run: bool = False

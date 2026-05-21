@@ -10,8 +10,8 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from app.services.filesystem.paths import FilesystemPathResolver
-from app.services.filesystem.policy import FilesystemAccessPolicy
+from app.services.filesystem.paths import FilesystemPathResolver, build_mounts
+from app.services.filesystem.policy import WorkspaceScopedFilesystemPolicy
 from app.services.filesystem.types import (
     FilesystemAccessRequest,
     FilesystemManageRequest,
@@ -21,6 +21,7 @@ from app.services.filesystem.types import (
     FilesystemWriteRequest,
     ResolvedFilesystemPath,
 )
+from app.services.workspace_layout import WorkspaceLayoutService
 
 DEFAULT_IGNORED_NAMES = {
     ".git",
@@ -37,13 +38,17 @@ class AgentFilesystemService:
     def __init__(
         self,
         *,
-        path_resolver: FilesystemPathResolver,
-        access_policy: FilesystemAccessPolicy,
+        workspace_layout_service: WorkspaceLayoutService,
+        mount_names: list[str],
         max_file_size: int,
         exclude_patterns: list[str] | None = None,
     ) -> None:
-        self.path_resolver = path_resolver
-        self.access_policy = access_policy
+        fs_root = workspace_layout_service.fs_root
+        mounts = build_mounts(mount_names=mount_names, fs_root=fs_root)
+        self.path_resolver = FilesystemPathResolver(mounts)
+        self.access_policy = WorkspaceScopedFilesystemPolicy(
+            workspace_layout_service=workspace_layout_service,
+        )
         self.max_file_size = max_file_size
         self.exclude_patterns = self._normalize_patterns(exclude_patterns)
 
@@ -817,6 +822,16 @@ class AgentFilesystemService:
         action: str,
         lines: Any | None,
     ) -> str:
+        if action == "append":
+            if lines is not None:
+                raise FilesystemToolError("'append' action must not be combined with 'lines'.")
+            addition = content or ""
+            if not addition:
+                return current_text
+            separator = "" if not current_text or current_text.endswith("\n") else "\n"
+            trailing = "" if addition.endswith("\n") else "\n"
+            return f"{current_text}{separator}{addition}{trailing}"
+
         if action == "replace" and lines is None:
             return content or ""
 

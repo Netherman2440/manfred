@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterable
+import logging
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -53,14 +54,21 @@ from app.domain.repositories import (
     SessionRepository,
     UserRepository,
 )
-from app.providers import ProviderErrorEvent, ProviderStreamEvent
+from app.events import EventBus
+from app.mcp import McpManager
+from app.providers import ProviderErrorEvent, ProviderRegistry, ProviderStreamEvent
 from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, CancellationSignal
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner import Runner
 from app.runtime.runner_types import RunResult
 from app.services.agent_loader import AgentLoader
 from app.services.chat_attachments import ChatAttachmentStorageService, IncomingAttachment, StoredAttachment
-from app.services.filesystem import WorkspaceLayoutService
+from app.services.filesystem import AgentFilesystemService
+from app.services.memory import ObserveUseCase
+from app.services.workspace_layout import WorkspaceLayoutService
+from app.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class ChatServiceValidationError(ValueError):
@@ -69,6 +77,17 @@ class ChatServiceValidationError(ValueError):
 
 class ChatServiceNotFoundError(LookupError):
     pass
+
+
+class ChatServiceDisabledError(RuntimeError):
+    """Raised when a feature is disabled via configuration (mapped to 503)."""
+
+
+@dataclass(slots=True, frozen=True)
+class SummarizeResponse:
+    status: str  # "success" | "locked" | "no_unobserved" | "below_threshold" | "error"
+    observations_preview: str | None = None
+    detail: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -102,30 +121,53 @@ class ChatService:
         session: DbSession,
         settings: Settings,
         agent_loader: AgentLoader,
-        user_repository: UserRepository,
-        session_repository: SessionRepository,
-        agent_repository: AgentRepository,
-        item_repository: ItemRepository,
-        queued_input_repository: QueuedInputRepository,
-        runner: Runner,
+        tool_registry: ToolRegistry,
+        mcp_manager: McpManager,
+        provider_registry: ProviderRegistry,
+        event_bus: EventBus,
         active_run_registry: ActiveRunRegistry,
         workspace_layout_service: WorkspaceLayoutService,
         attachment_storage_service: ChatAttachmentStorageService,
-        message_queue: SessionMessageQueue,
+        filesystem_service: AgentFilesystemService,
+        memory_path_resolver: Callable[[str, str], object] | None = None,
+        observe_use_case: ObserveUseCase | None = None,
     ) -> None:
         self.session = session
         self.settings = settings
         self.agent_loader = agent_loader
-        self.user_repository = user_repository
-        self.session_repository = session_repository
-        self.agent_repository = agent_repository
-        self.item_repository = item_repository
-        self.queued_input_repository = queued_input_repository
-        self.runner = runner
+        self.user_repository = UserRepository(session)
+        self.session_repository = SessionRepository(session)
+        self.agent_repository = AgentRepository(session)
+        self.item_repository = ItemRepository(session)
+        self.queued_input_repository = QueuedInputRepository(session)
+        self.message_queue = SessionMessageQueue(
+            queued_input_repository=self.queued_input_repository,
+            item_repository=self.item_repository,
+        )
+        self.runner = Runner(
+            agent_repository=self.agent_repository,
+            session_repository=self.session_repository,
+            item_repository=self.item_repository,
+            user_repository=self.user_repository,
+            tool_registry=tool_registry,
+            mcp_manager=mcp_manager,
+            provider_registry=provider_registry,
+            event_bus=event_bus,
+            agent_loader=agent_loader,
+            max_delegation_depth=settings.MAX_DELEGATION_DEPTH,
+            max_turns=settings.MAX_TURNS,
+            message_queue=self.message_queue,
+            filesystem_service=filesystem_service,
+            observational_memory_enabled=settings.OBSERVATIONAL_MEMORY_ENABLED,
+            memory_path_resolver=memory_path_resolver,
+        )
         self.active_run_registry = active_run_registry
         self.workspace_layout_service = workspace_layout_service
         self.attachment_storage_service = attachment_storage_service
-        self.message_queue = message_queue
+        self.observe_use_case = observe_use_case
+
+    def close(self) -> None:
+        self.session.close()
 
     async def process_chat(
         self,
@@ -166,6 +208,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat execution failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -216,6 +259,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat streaming failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -267,6 +311,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat edit failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -321,6 +366,7 @@ class ChatService:
                 run_result = self._build_cancelled_run_result(active_run.agent_id)
             raise
         except Exception as exc:
+            logger.exception("Chat edit streaming failed")
             self.session.rollback()
             self.attachment_storage_service.cleanup_files(created_files)
             if active_run is not None:
@@ -715,8 +761,31 @@ class ChatService:
             error=result.error,
         )
 
-    def close(self) -> None:
-        self.session.close()
+    async def summarize_session(self, session_id: str) -> SummarizeResponse:
+        if not self.settings.OBSERVATIONAL_MEMORY_ENABLED or self.observe_use_case is None:
+            raise ChatServiceDisabledError("Observational memory is disabled.")
+
+        session = self._ensure_session_owner(session_id, action="summarize")
+        if session.root_agent_id is None:
+            raise ChatServiceNotFoundError(f"Session has no root agent: {session_id}")
+        root_agent = self.agent_repository.get(session.root_agent_id)
+        if root_agent is None or not root_agent.agent_name:
+            raise ChatServiceNotFoundError(f"Root agent not found for session: {session_id}")
+
+        outcome = await self.observe_use_case.execute(
+            session_id=session.id,
+            agent_run_id=root_agent.id,
+            force=True,
+        )
+
+        preview: str | None = None
+        if outcome.result is not None:
+            preview = outcome.result.observations[:200]
+        return SummarizeResponse(
+            status=outcome.status,
+            observations_preview=preview,
+            detail=outcome.detail,
+        )
 
     def _ensure_default_user(self) -> User:
         user = self.user_repository.get(self.settings.DEFAULT_USER_ID)

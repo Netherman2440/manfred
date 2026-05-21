@@ -14,3 +14,5 @@ class Session:
     created_at: datetime
     updated_at: datetime
     workspace_path: str | None = None
+    last_observed_item_id: str | None = None
+    current_task: str | None = None

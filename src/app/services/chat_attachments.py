@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.domain import Session, User
-from app.services.filesystem import WorkspaceLayoutService
+from app.services.workspace_layout import WorkspaceLayoutService
 
 
 @dataclass(slots=True, frozen=True)
