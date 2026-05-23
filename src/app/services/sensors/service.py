@@ -98,9 +98,7 @@ class SensorService(BaseSensorService):
         for sensor in self._sensors:
             if type_filter not in sensor.sensor_types:
                 continue
-            expected = {
-                _TYPE_TO_FIELD[t] for t in sensor.sensor_types if t in _TYPE_TO_FIELD
-            }
+            expected = {_TYPE_TO_FIELD[t] for t in sensor.sensor_types if t in _TYPE_TO_FIELD}
             forbidden = all_fields - expected
             if any(getattr(sensor, field) for field in forbidden):
                 results.append(sensor)
@@ -115,11 +113,7 @@ class SensorService(BaseSensorService):
         for path in files:
             with path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            sensor_types = tuple(
-                part.strip().lower()
-                for part in str(data["sensor_type"]).split("/")
-                if part.strip()
-            )
+            sensor_types = tuple(part.strip().lower() for part in str(data["sensor_type"]).split("/") if part.strip())
             sensors.append(
                 SensorReading(
                     file_id=path.stem,

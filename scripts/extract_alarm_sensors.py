@@ -1,4 +1,5 @@
 """Skanuj wszystkie sensory, znajdź te z alarmującą operator_notes."""
+
 from __future__ import annotations
 
 import sys
@@ -72,16 +73,59 @@ def has_alarm(text: str) -> bool:
     t = text.lower()
     return any(kw in t for kw in ALARM_HOTWORDS)
 
+
 CLEANED = {
-    "1053", "2044", "2238", "3713", "4040",
-    "1819", "4237", "8457",
-    "1269", "2500", "4888", "5022",
-    "0567", "0753", "2175", "5156", "8168", "8410", "9151", "9604",
-    "0307", "6281",
-    "5405", "5799", "8076", "9288", "9848", "0158", "1678", "2958", "3123",
-    "4630", "7680", "7701", "9583", "0516", "4186", "4673", "5714", "5715",
-    "6197", "6336", "1632", "3798", "9422", "9518",
-    "5000", "9614", "1743", "8369", "7266",
+    "1053",
+    "2044",
+    "2238",
+    "3713",
+    "4040",
+    "1819",
+    "4237",
+    "8457",
+    "1269",
+    "2500",
+    "4888",
+    "5022",
+    "0567",
+    "0753",
+    "2175",
+    "5156",
+    "8168",
+    "8410",
+    "9151",
+    "9604",
+    "0307",
+    "6281",
+    "5405",
+    "5799",
+    "8076",
+    "9288",
+    "9848",
+    "0158",
+    "1678",
+    "2958",
+    "3123",
+    "4630",
+    "7680",
+    "7701",
+    "9583",
+    "0516",
+    "4186",
+    "4673",
+    "5714",
+    "5715",
+    "6197",
+    "6336",
+    "1632",
+    "3798",
+    "9422",
+    "9518",
+    "5000",
+    "9614",
+    "1743",
+    "8369",
+    "7266",
 }
 
 
@@ -128,9 +172,12 @@ def main() -> None:
         sensor = next(s for s in sensors if s.file_id == sid)
         print(f"  {sid} types={sensor.sensor_types} notes={sensor.operator_notes!r}")
 
-    out = ROOT / ".agent_data/default-user/shared/aidevs/tasks/evaluation/extracted_alarm.md"
+    out = (
+        ROOT
+        / ".agent_data/default-user/shared/aidevs/tasks/evaluation/extracted_alarm.md"
+    )
     with out.open("w", encoding="utf-8") as f:
-        f.write(f"# Alarm sensors extracted programatically\n\n")
+        f.write("# Alarm sensors extracted programatically\n\n")
         f.write(f"Total sensors scanned: {len(sensors)}\n")
         f.write(f"Alarm sensors: {len(alarm_set)}\n")
         f.write(f"Distinct alarm notes (full): {len(distinct_alarm_notes)}\n")
@@ -140,11 +187,15 @@ def main() -> None:
         f.write("## In alarm_set but NOT in cleaned (NEW)\n\n")
         for sid in missing_from_cleaned:
             sensor = next(s for s in sensors if s.file_id == sid)
-            f.write(f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n")
+            f.write(
+                f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n"
+            )
         f.write("\n## In cleaned but NOT in alarm_set\n\n")
         for sid in extra_in_cleaned:
             sensor = next(s for s in sensors if s.file_id == sid)
-            f.write(f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n")
+            f.write(
+                f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n"
+            )
 
         f.write("\n## All distinct alarm clauses\n\n")
         for c in sorted(distinct_alarm_clauses):

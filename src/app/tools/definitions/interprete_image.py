@@ -85,9 +85,7 @@ def build_interprete_image_tool(settings: Settings) -> Tool:
             source = "url"
         else:
             if not context.workspace_path:
-                raise ValueError(
-                    "interprete_image requires an active session workspace to resolve local paths"
-                )
+                raise ValueError("interprete_image requires an active session workspace to resolve local paths")
             local = _resolve_local_path(context.workspace_path, path_arg)
             image_url = _to_data_url(local)
             source = "local"

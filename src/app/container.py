@@ -139,13 +139,15 @@ class Container(containers.DeclarativeContainer):
     sensor_service = providers.Singleton(
         SensorService,
         sensors_dir=providers.Callable(
-            lambda repo_root, settings: repo_root
-            / settings.WORKSPACE_PATH
-            / settings.DEFAULT_USER_ID
-            / "shared"
-            / "aidevs"
-            / "data"
-            / "sensors",
+            lambda repo_root, settings: (
+                repo_root
+                / settings.WORKSPACE_PATH
+                / settings.DEFAULT_USER_ID
+                / "shared"
+                / "aidevs"
+                / "data"
+                / "sensors"
+            ),
             repo_root=repo_root,
             settings=settings,
         ),

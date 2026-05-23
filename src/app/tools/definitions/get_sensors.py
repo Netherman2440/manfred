@@ -101,9 +101,7 @@ def _normalize_notes_contains(value: Any) -> str | list[str] | None:
         cleaned: list[str] = []
         for item in value:
             if not isinstance(item, str):
-                raise ValueError(
-                    "'notes_contains' must be a string or a list of strings"
-                )
+                raise ValueError("'notes_contains' must be a string or a list of strings")
             stripped = item.strip()
             if stripped:
                 cleaned.append(stripped)
@@ -270,8 +268,7 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Optional. Exact file_id matches, e.g. ['0001', '0042']. "
-                            "Combines with other filters (AND)."
+                            "Optional. Exact file_id matches, e.g. ['0001', '0042']. Combines with other filters (AND)."
                         ),
                     },
                     "sensor_type": {
