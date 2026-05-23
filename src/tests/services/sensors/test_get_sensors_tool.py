@@ -147,3 +147,34 @@ async def test_empty_string_filters_treated_as_none(sensor_tool, context) -> Non
     assert result["ok"] is True
     payload = json.loads(result["output"])
     assert payload["total_matches"] == 3
+
+
+@pytest.mark.asyncio
+async def test_notes_contains_accepts_string(sensor_tool, context) -> None:
+    result = await sensor_tool.handler({"notes_contains": "stable"}, context)
+    assert result["ok"] is True
+    payload = json.loads(result["output"])
+    assert payload["total_matches"] == 3
+
+
+@pytest.mark.asyncio
+async def test_notes_contains_accepts_list_any_match(sensor_tool, context, tmp_path: Path) -> None:
+    directory = tmp_path / "sensors_list"
+    directory.mkdir()
+    _write_sensor(directory, "0010", operator_notes="faulty sensor, replace")
+    _write_sensor(directory, "0011", operator_notes="all stable")
+    _write_sensor(directory, "0012", operator_notes="out of spec, check unit")
+    _write_sensor(directory, "0013", operator_notes="nominal")
+    tool = build_get_sensors_tool(SensorService(sensors_dir=directory))
+
+    result = await tool.handler({"notes_contains": ["faulty", "out of spec"]}, context)
+    assert result["ok"] is True
+    payload = json.loads(result["output"])
+    assert {s["file_id"] for s in payload["sensors"]} == {"0010", "0012"}
+
+
+@pytest.mark.asyncio
+async def test_notes_contains_list_rejects_non_string_entries(sensor_tool, context) -> None:
+    result = await sensor_tool.handler({"notes_contains": ["faulty", 123]}, context)
+    assert result["ok"] is False
+    assert "notes_contains" in result["error"]

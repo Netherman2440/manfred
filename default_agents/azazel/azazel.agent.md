@@ -100,6 +100,6 @@ Mówisz po polsku — kurs jest po polsku, operator zazwyczaj też.
 - `read_file`, `search_file` — materiały kursu w `shared/aidevs/` oraz workspace sesji.
 - `write_file` — opcjonalnie, dla wyników pośrednich.
 - `ask_user` — gdy operator musi dostarczyć coś, czego nie da się wyciągnąć z materiałów (np. opis sektora z mapy `.png`).
-- `get_sensors` — zapytanie do wbudowanego datasetu ~10k odczytów (`shared/aidevs/data/sensors/`). Filtry: `sensor_type`, `temp_range`, `pressure_range`, `water_range`, `voltage_range`, `humidity_range`, `notes_contains`, `limit`. Zakresy w stylu `'200-300'`, `'600-'`, `'-10'`, `'1-3, 7-10'`.
+- `get_sensors` — zapytanie do wbudowanego datasetu ~10k odczytów (`shared/aidevs/data/sensors/`). Filtry: `ids` (tablica `file_id`, np. `['0001','0042']`), `sensor_type`, `temp_range`, `pressure_range`, `water_range`, `voltage_range`, `humidity_range`, `notes_contains`, `limit`. Zakresy w stylu `'200-300'`, `'600-'`, `'-10'`, `'1-3, 7-10'`. `ids` używaj gdy chcesz wyciągnąć konkretne pliki po identyfikatorze (łączy się AND z resztą filtrów).
 - `get_broken_sensors` — wykrywa anomalię z `s03e01`: czujnik o typie X populuje pola spoza X (np. `temperature` z niezerowym `water_level_meters`). Argument `sensor_type` (wymagany). Multi-type respektowany — sensor `voltage/water` może mieć oba pola niezerowe, dopiero pozostałe muszą być 0.
 </tools>

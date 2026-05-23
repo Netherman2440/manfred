@@ -125,6 +125,30 @@ def test_filter_by_notes_contains_case_insensitive(sensors_dir: Path) -> None:
     assert {s.file_id for s in result} == {"0001"}
 
 
+def test_filter_by_notes_contains_list_any_match(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(notes_contains=["stable", "spike"])
+    assert {s.file_id for s in result} == {"0001", "0003"}
+
+
+def test_filter_by_notes_contains_list_case_insensitive(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(notes_contains=["STABLE", "SPIKE"])
+    assert {s.file_id for s in result} == {"0001", "0003"}
+
+
+def test_filter_by_notes_contains_list_empty_falls_back_to_no_filter(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(notes_contains=[])
+    assert {s.file_id for s in result} == {"0001", "0002", "0003", "0004"}
+
+
+def test_filter_by_notes_contains_list_skips_blank_entries(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(notes_contains=["   ", "spike"])
+    assert {s.file_id for s in result} == {"0003"}
+
+
 def test_filters_compose(sensors_dir: Path) -> None:
     service = SensorService(sensors_dir=sensors_dir)
     result = service.get_sensors(
@@ -133,6 +157,31 @@ def test_filters_compose(sensors_dir: Path) -> None:
         humidity_range="0-50",
     )
     assert {s.file_id for s in result} == {"0001", "0004"}
+
+
+def test_filter_by_ids(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(ids=["0001", "0003"])
+    assert {s.file_id for s in result} == {"0001", "0003"}
+
+
+def test_filter_by_ids_combines_with_type(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(ids=["0001", "0002", "0003"], sensor_type="voltage")
+    assert {s.file_id for s in result} == {"0001", "0002"}
+
+
+def test_filter_by_ids_empty_list_is_noop(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(ids=[])
+    # empty list → no filter applied (same semantics as None) — matches all
+    assert len(result) == 4
+
+
+def test_filter_by_ids_unknown_returns_empty(sensors_dir: Path) -> None:
+    service = SensorService(sensors_dir=sensors_dir)
+    result = service.get_sensors(ids=["does-not-exist"])
+    assert result == []
 
 
 def test_get_broken_sensors_flags_unexpected_field(sensors_dir: Path) -> None:

@@ -40,23 +40,33 @@ class SensorService(BaseSensorService):
     def get_sensors(
         self,
         *,
+        ids: list[str] | None = None,
         sensor_type: str | None = None,
         temp_range: str | None = None,
         pressure_range: str | None = None,
         water_range: str | None = None,
         voltage_range: str | None = None,
         humidity_range: str | None = None,
-        notes_contains: str | None = None,
+        notes_contains: str | list[str] | None = None,
     ) -> list[SensorReading]:
         if self._sensors is None:
             self.load_sensors()
         assert self._sensors is not None
 
-        needle = notes_contains.lower() if notes_contains else None
+        if notes_contains is None:
+            needles: list[str] | None = None
+        elif isinstance(notes_contains, str):
+            stripped = notes_contains.strip()
+            needles = [stripped.lower()] if stripped else None
+        else:
+            needles = [n.strip().lower() for n in notes_contains if n and n.strip()] or None
         type_filter = sensor_type.lower() if sensor_type else None
+        id_filter = {i for i in ids} if ids else None
 
         results: list[SensorReading] = []
         for sensor in self._sensors:
+            if id_filter is not None and sensor.file_id not in id_filter:
+                continue
             if type_filter is not None and type_filter not in sensor.sensor_types:
                 continue
             if temp_range is not None and not matches_range(sensor.temperature_K, temp_range):
@@ -69,8 +79,10 @@ class SensorService(BaseSensorService):
                 continue
             if humidity_range is not None and not matches_range(sensor.humidity_percent, humidity_range):
                 continue
-            if needle is not None and needle not in sensor.operator_notes.lower():
-                continue
+            if needles is not None:
+                notes_lower = sensor.operator_notes.lower()
+                if not any(n in notes_lower for n in needles):
+                    continue
             results.append(sensor)
         return results
 

@@ -10,6 +10,7 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 500
 
 ALLOWED_ARGS: tuple[str, ...] = (
+    "ids",
     "sensor_type",
     "temp_range",
     "pressure_range",
@@ -21,6 +22,11 @@ ALLOWED_ARGS: tuple[str, ...] = (
 )
 
 ARG_ALIASES: dict[str, str] = {
+    "id": "ids",
+    "file_id": "ids",
+    "file_ids": "ids",
+    "sensor_id": "ids",
+    "sensor_ids": "ids",
     "temperature_range": "temp_range",
     "temperature_k_range": "temp_range",
     "temperature_K_range": "temp_range",
@@ -47,13 +53,14 @@ ARG_ALIASES: dict[str, str] = {
 
 ARGS_FORMAT_HINT = (
     "Accepted arguments (all optional):\n"
+    "  - ids                (array of strings) exact file_id match, e.g. ['0001', '0042']\n"
     "  - sensor_type        (string) e.g. 'voltage', 'water', 'temperature', 'pressure', 'humidity'\n"
     "  - temp_range         (string) range over temperature_K\n"
     "  - pressure_range     (string) range over pressure_bar\n"
     "  - water_range        (string) range over water_level_meters\n"
     "  - voltage_range      (string) range over voltage_supply_v\n"
     "  - humidity_range     (string) range over humidity_percent\n"
-    "  - notes_contains     (string) case-insensitive substring of operator_notes\n"
+    "  - notes_contains     (string OR array of strings) case-insensitive substring(s) of operator_notes; array = match ANY (OR)\n"
     "  - limit              (integer) max sensors returned (default 50, max 500)\n"
     "Common typos: 'temperature_K_range' -> 'temp_range'; 'pressure_bar_range' -> 'pressure_range'; "
     "'water_level_meters_range' -> 'water_range'; 'voltage_supply_v_range' -> 'voltage_range'; "
@@ -82,6 +89,26 @@ def _normalize_optional_str(value: Any, name: str) -> str | None:
         raise ValueError(f"'{name}' must be a string or null")
     stripped = value.strip()
     return stripped or None
+
+
+def _normalize_notes_contains(value: Any) -> str | list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if isinstance(value, list):
+        cleaned: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(
+                    "'notes_contains' must be a string or a list of strings"
+                )
+            stripped = item.strip()
+            if stripped:
+                cleaned.append(stripped)
+        return cleaned or None
+    raise ValueError("'notes_contains' must be a string or a list of strings")
 
 
 def _check_unknown_args(args: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
@@ -116,6 +143,25 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
                 response["did_you_mean"] = suggestions
             return response
 
+        raw_ids = args.get("ids")
+        ids: list[str] | None
+        if raw_ids is None:
+            ids = None
+        elif isinstance(raw_ids, list):
+            if not all(isinstance(x, str) and x.strip() for x in raw_ids):
+                return {
+                    "ok": False,
+                    "error": "'ids' must be a list of non-empty strings",
+                    "hint": ARGS_FORMAT_HINT,
+                }
+            ids = [x.strip() for x in raw_ids] or None
+        else:
+            return {
+                "ok": False,
+                "error": "'ids' must be an array of strings",
+                "hint": ARGS_FORMAT_HINT,
+            }
+
         try:
             sensor_type = _normalize_optional_str(args.get("sensor_type"), "sensor_type")
             temp_range = _normalize_optional_str(args.get("temp_range"), "temp_range")
@@ -123,7 +169,7 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
             water_range = _normalize_optional_str(args.get("water_range"), "water_range")
             voltage_range = _normalize_optional_str(args.get("voltage_range"), "voltage_range")
             humidity_range = _normalize_optional_str(args.get("humidity_range"), "humidity_range")
-            notes_contains = _normalize_optional_str(args.get("notes_contains"), "notes_contains")
+            notes_contains = _normalize_notes_contains(args.get("notes_contains"))
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -138,6 +184,7 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
 
         try:
             matches = sensor_service.get_sensors(
+                ids=ids,
                 sensor_type=sensor_type,
                 temp_range=temp_range,
                 pressure_range=pressure_range,
@@ -188,7 +235,7 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
     description = (
         "Query a fixed in-memory dataset of ~10,000 sensor readings. "
         "STRICT ARG NAMES — only the following keys are accepted: "
-        "'sensor_type', 'temp_range', 'pressure_range', 'water_range', 'voltage_range', "
+        "'ids', 'sensor_type', 'temp_range', 'pressure_range', 'water_range', 'voltage_range', "
         "'humidity_range', 'notes_contains', 'limit'. "
         "Range arg names DO NOT include the unit suffix — use 'temp_range' (NOT 'temperature_K_range'), "
         "'pressure_range' (NOT 'pressure_bar_range'), 'water_range' (NOT 'water_level_meters_range'), "
@@ -199,11 +246,14 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
         "All filter arguments are OPTIONAL — omit them to match everything. "
         "Returns 'total_matches' plus a capped page of sensor objects.\n\n"
         "Filters:\n"
+        "  - ids: array of exact file_id strings (e.g. ['0001', '0042']). When provided, "
+        "only sensors with matching file_id are returned. Combines (AND) with other filters.\n"
         "  - sensor_type: substring matched against each entry in the sensor_types list "
         "(case-insensitive, exact token match, e.g. 'voltage' matches ['voltage', 'water']).\n"
         "  - temp_range / pressure_range / water_range / voltage_range / humidity_range: "
         "page-style numeric ranges over the matching field. See RANGE FORMAT below.\n"
-        "  - notes_contains: case-insensitive substring of operator_notes.\n"
+        "  - notes_contains: case-insensitive substring of operator_notes. Accepts a single string OR "
+        "an array of strings — array semantics is OR (sensor matches if ANY of the substrings is present in its notes).\n"
         "  - limit: how many sensors to return (default 50, max 500). Total count always reported.\n\n"
         f"RANGE FORMAT:\n{RANGE_FORMAT_HINT}"
     )
@@ -216,6 +266,14 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
             parameters={
                 "type": "object",
                 "properties": {
+                    "ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional. Exact file_id matches, e.g. ['0001', '0042']. "
+                            "Combines with other filters (AND)."
+                        ),
+                    },
                     "sensor_type": {
                         "type": "string",
                         "description": (
@@ -250,8 +308,16 @@ def build_get_sensors_tool(sensor_service: BaseSensorService) -> Tool:
                         "description": "Optional. Range over humidity_percent (0..100). Same format as temp_range.",
                     },
                     "notes_contains": {
-                        "type": "string",
-                        "description": "Optional. Case-insensitive substring of operator_notes.",
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "Optional. Case-insensitive substring of operator_notes. "
+                            "Pass a single string for one substring, or an array of strings "
+                            "(e.g. ['faulty', 'replace', 'out of spec']) to match ANY (OR) — "
+                            "a sensor is returned if its notes contain at least one of the substrings."
+                        ),
                     },
                     "limit": {
                         "type": "integer",
