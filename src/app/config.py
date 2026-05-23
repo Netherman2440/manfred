@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     OPEN_ROUTER_API_KEY: str = ""
     OPEN_ROUTER_LLM_MODEL: str = "openai/gpt-4o-mini"
     OPEN_ROUTER_SLM_MODEL: str = "openai/gpt-4o-mini"
+    OPEN_ROUTER_VISION_MODEL: str = "moonshotai/kimi-k2.5"
     DEFAULT_USER_ID: str = "default-user"
     DEFAULT_USER_NAME: str = "Default User"
 
@@ -44,7 +45,7 @@ class Settings(BaseSettings):
 
     # openai TODO
 
-    LANGFUSE_ENABLED: bool = False
+    LANGFUSE_ENABLED: bool = True
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_HOST: str = "https://cloud.langfuse.com"
@@ -53,7 +54,7 @@ class Settings(BaseSettings):
     AI_DEVS_API_KEY: str = ""
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
 
-    OBSERVATIONAL_MEMORY_ENABLED: bool = False
+    OBSERVATIONAL_MEMORY_ENABLED: bool = True
     TOKENS_TO_OBSERVE: int = 30_000
     TOKENS_TO_REFLECT: int = 40_000
     OBSERVER_LLM_MODEL: str = "openai/gpt-4o-mini"

@@ -25,6 +25,7 @@ from app.services.memory import (
     ObserveUseCase,
 )
 from app.services.model_catalog_service import ModelCatalogService
+from app.services.sensors import BaseSensorService, SensorService
 from app.services.session_query_service import SessionQueryService
 from app.services.tiktokenizer import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
@@ -37,12 +38,16 @@ from app.tools.definitions.aidevs import (
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
 from app.tools.definitions.delegate import delegate_tool
+from app.tools.definitions.fetch_html import fetch_html_tool
 from app.tools.definitions.filesystem import (
     build_manage_file_tool,
     build_read_file_tool,
     build_search_file_tool,
     build_write_file_tool,
 )
+from app.tools.definitions.get_broken_sensors import build_get_broken_sensors_tool
+from app.tools.definitions.get_sensors import build_get_sensors_tool
+from app.tools.definitions.interprete_image import build_interprete_image_tool
 from app.tools.definitions.message import message_tool
 from app.tools.definitions.web_search import web_search_tool
 from app.tools.registry import ToolRegistry
@@ -51,6 +56,7 @@ from app.utils.paths import default_user_workspace_path, get_repo_root, resolve_
 
 def get_tools(
     filesystem_service: AgentFilesystemService,
+    sensor_service: BaseSensorService,
     settings: Settings,
 ) -> list[Tool]:
     return [
@@ -59,6 +65,7 @@ def get_tools(
         ask_user_tool,
         message_tool,
         web_search_tool,
+        fetch_html_tool,
         build_read_file_tool(filesystem_service),
         build_search_file_tool(filesystem_service),
         build_write_file_tool(filesystem_service),
@@ -66,6 +73,9 @@ def get_tools(
         build_submit_task_tool(settings),
         build_fetch_aidevs_data_tool(settings),
         build_mail_api_tool(settings),
+        build_interprete_image_tool(settings),
+        build_get_sensors_tool(sensor_service),
+        build_get_broken_sensors_tool(sensor_service),
     ]
 
 
@@ -126,11 +136,26 @@ class Container(containers.DeclarativeContainer):
         max_file_size=settings.provided.MAX_FILE_SIZE,
         exclude_patterns=settings.provided.filesystem_exclude_patterns.call(),
     )
+    sensor_service = providers.Singleton(
+        SensorService,
+        sensors_dir=providers.Callable(
+            lambda repo_root, settings: repo_root
+            / settings.WORKSPACE_PATH
+            / settings.DEFAULT_USER_ID
+            / "shared"
+            / "aidevs"
+            / "data"
+            / "sensors",
+            repo_root=repo_root,
+            settings=settings,
+        ),
+    )
     tool_registry = providers.Singleton(
         ToolRegistry,
         tools=providers.Callable(
             get_tools,
             filesystem_service=filesystem_service,
+            sensor_service=sensor_service,
             settings=settings,
         ),
     )
