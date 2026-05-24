@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     AI_DEVS_API_KEY: str = ""
     AI_DEVS_HUB_URL: str = "https://hub.ag3nts.org"
 
+    FIRECRAWL_API_KEY: str = ""
+
     OBSERVATIONAL_MEMORY_ENABLED: bool = True
     TOKENS_TO_OBSERVE: int = 30_000
     TOKENS_TO_REFLECT: int = 40_000
