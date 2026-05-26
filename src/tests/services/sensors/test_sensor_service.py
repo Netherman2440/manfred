@@ -88,11 +88,11 @@ def test_get_sensors_loads_lazily(sensors_dir: Path) -> None:
 def test_load_sensors_idempotent(sensors_dir: Path) -> None:
     service = SensorService(sensors_dir=sensors_dir)
     service.load_sensors()
-    first = service.get_sensors()
+    first_ids = [s.file_id for s in service.get_sensors()]
     _write_sensor(sensors_dir, "9999", sensor_type="extra")
     service.load_sensors()
-    second = service.get_sensors()
-    assert [s.file_id for s in first] == [s.file_id for s in second]
+    second_ids = [s.file_id for s in service.get_sensors()]
+    assert first_ids == second_ids
 
 
 def test_filter_by_sensor_type_substring(sensors_dir: Path) -> None:

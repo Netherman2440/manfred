@@ -64,7 +64,7 @@ ARGS_FORMAT_HINT = (
     "  - limit              (integer) max sensors returned (default 50, max 500)\n"
     "Common typos: 'temperature_K_range' -> 'temp_range'; 'pressure_bar_range' -> 'pressure_range'; "
     "'water_level_meters_range' -> 'water_range'; 'voltage_supply_v_range' -> 'voltage_range'; "
-    "'humidity_percent_range' -> 'humidity_range'. Do NOT invent new arg names — only the eight above are accepted."
+    "'humidity_percent_range' -> 'humidity_range'. Do NOT invent new arg names — only the nine above are accepted."
 )
 
 RANGE_FORMAT_HINT = (

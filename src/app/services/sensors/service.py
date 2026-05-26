@@ -7,7 +7,7 @@ from pathlib import Path
 
 from app.services.sensors.base import BaseSensorService
 from app.services.sensors.models import SensorReading
-from app.services.sensors.range_parser import matches_range
+from app.services.sensors.range_parser import RangeSegment, parse_range
 
 logger = logging.getLogger("app.services.sensors")
 
@@ -63,21 +63,35 @@ class SensorService(BaseSensorService):
         type_filter = sensor_type.lower() if sensor_type else None
         id_filter = {i for i in ids} if ids else None
 
+        def _parse(spec: str | None) -> list[RangeSegment] | None:
+            return parse_range(spec) if spec is not None else None
+
+        temp_segments = _parse(temp_range)
+        pressure_segments = _parse(pressure_range)
+        water_segments = _parse(water_range)
+        voltage_segments = _parse(voltage_range)
+        humidity_segments = _parse(humidity_range)
+
+        def _matches(segments: list[RangeSegment] | None, value: float) -> bool:
+            if segments is None:
+                return True
+            return any(seg.matches(value) for seg in segments)
+
         results: list[SensorReading] = []
         for sensor in self._sensors:
             if id_filter is not None and sensor.file_id not in id_filter:
                 continue
             if type_filter is not None and type_filter not in sensor.sensor_types:
                 continue
-            if temp_range is not None and not matches_range(sensor.temperature_K, temp_range):
+            if not _matches(temp_segments, sensor.temperature_K):
                 continue
-            if pressure_range is not None and not matches_range(sensor.pressure_bar, pressure_range):
+            if not _matches(pressure_segments, sensor.pressure_bar):
                 continue
-            if water_range is not None and not matches_range(sensor.water_level_meters, water_range):
+            if not _matches(water_segments, sensor.water_level_meters):
                 continue
-            if voltage_range is not None and not matches_range(sensor.voltage_supply_v, voltage_range):
+            if not _matches(voltage_segments, sensor.voltage_supply_v):
                 continue
-            if humidity_range is not None and not matches_range(sensor.humidity_percent, humidity_range):
+            if not _matches(humidity_segments, sensor.humidity_percent):
                 continue
             if needles is not None:
                 notes_lower = sensor.operator_notes.lower()

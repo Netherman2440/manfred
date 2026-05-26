@@ -37,6 +37,7 @@ from app.tools.definitions.aidevs import (
     build_fetch_aidevs_data_tool,
     build_mail_api_tool,
     build_submit_task_tool,
+    build_tool_search_tool,
 )
 from app.tools.definitions.ask_user import ask_user_tool
 from app.tools.definitions.calculator import calculator_tool
@@ -86,6 +87,7 @@ def get_tools(
         build_submit_task_tool(settings),
         build_fetch_aidevs_data_tool(settings),
         build_mail_api_tool(settings),
+        build_tool_search_tool(settings),
         build_execute_cmd_tool(settings),
         build_interprete_image_tool(settings),
         build_get_sensors_tool(sensor_service),

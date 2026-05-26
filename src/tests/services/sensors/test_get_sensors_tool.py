@@ -84,6 +84,7 @@ async def test_invalid_range_swapped_bounds_returns_hint(sensor_tool, context) -
 @pytest.mark.asyncio
 async def test_limit_truncates_with_hint(sensor_tool, context) -> None:
     result = await sensor_tool.handler({"limit": 2}, context)
+    assert result["ok"] is True
     payload = json.loads(result["output"])
     assert payload["total_matches"] == 3
     assert payload["returned"] == 2
@@ -101,6 +102,7 @@ async def test_limit_must_be_integer(sensor_tool, context) -> None:
 @pytest.mark.asyncio
 async def test_sensor_type_filter(sensor_tool, context) -> None:
     result = await sensor_tool.handler({"sensor_type": "water"}, context)
+    assert result["ok"] is True
     payload = json.loads(result["output"])
     assert payload["total_matches"] == 1
     assert payload["sensors"][0]["file_id"] == "0002"

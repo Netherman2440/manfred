@@ -13,6 +13,7 @@ from app.domain.tool import FunctionToolDefinition, Tool, ToolExecutionContext
 
 DEFAULT_PROMPT = "Describe this image in detail."
 REQUEST_TIMEOUT = 60.0
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _URL_SCHEMES = ("http://", "https://")
 
 
@@ -44,6 +45,9 @@ def _to_data_url(path: Path) -> str:
     mime, _ = mimetypes.guess_type(path.name)
     if mime is None or not mime.startswith("image/"):
         raise ValueError(f"file does not look like an image (mime={mime}): {path.name}")
+    size = path.stat().st_size
+    if size > MAX_IMAGE_BYTES:
+        raise ValueError(f"image too large ({size} bytes), max allowed is {MAX_IMAGE_BYTES} bytes")
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime};base64,{encoded}"
 

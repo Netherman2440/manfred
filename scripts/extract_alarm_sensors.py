@@ -8,65 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from alarm_keywords import ALARM_HOTWORDS  # noqa: E402
 from app.services.sensors import SensorService  # noqa: E402
-
-ALARM_HOTWORDS = [
-    "troubleshooting",
-    "doubtful",
-    "should be investigated",
-    "investigation is completed",
-    "under investigation",
-    "suspicious",
-    "quality audit",
-    "unreliable",
-    "urgent verification",
-    "unusual",
-    "escalated",
-    "maintenance follow-up",
-    "root-cause analysis",
-    "flagged it",
-    "quality control",
-    "probable fault",
-    "potential fault",
-    "diagnostic task",
-    "engineering analysis",
-    "degradation",
-    "signs of malfunction",
-    "signs of an issue",
-    "instability",
-    "unstable",
-    "irregularity",
-    "inconsistency",
-    "inconsistent",
-    "compromised",
-    "anomaly check",
-    "visible anomaly",
-    "behavior is concerning",
-    "raises serious doubts",
-    "not trustworthy",
-    "not comfortable",
-    "did not look right",
-    "does not match healthy",
-    "does not look healthy",
-    "not the pattern i expected",
-    "outside expected behavior",
-    "conflicts with our baseline",
-    "safety-minded review",
-    "consistency is clearly broken",
-    "cannot be treated as normal",
-    "requires attention",
-    "questionable behavior",
-    "replacement assessment",
-    "revalidation",
-    "on-site inspection",
-    "technicians to inspect",
-    "unexpected pattern",
-    "confidence in this report is low",
-    "changed in a risky way",
-    "stream contains signs",
-    "operating picture is not trustworthy",
-    "pattern indicates probable",
-]
 
 
 def has_alarm(text: str) -> bool:
@@ -133,6 +76,7 @@ def main() -> None:
     sensors_dir = ROOT / ".agent_data/default-user/shared/aidevs/data/sensors"
     service = SensorService(sensors_dir=sensors_dir)
     sensors = service.get_sensors()
+    sensors_by_id = {s.file_id: s for s in sensors}
     print(f"Loaded {len(sensors)} sensors from {sensors_dir}")
 
     alarm_ids: list[str] = []
@@ -164,12 +108,18 @@ def main() -> None:
 
     print(f"\nIN alarm_set but NOT in cleaned: {len(missing_from_cleaned)}")
     for sid in missing_from_cleaned:
-        sensor = next(s for s in sensors if s.file_id == sid)
+        sensor = sensors_by_id.get(sid)
+        if sensor is None:
+            print(f"  {sid} (missing in current dataset)")
+            continue
         print(f"  {sid} types={sensor.sensor_types} notes={sensor.operator_notes!r}")
 
     print(f"\nIN cleaned but NOT alarm_set: {len(extra_in_cleaned)}")
     for sid in extra_in_cleaned:
-        sensor = next(s for s in sensors if s.file_id == sid)
+        sensor = sensors_by_id.get(sid)
+        if sensor is None:
+            print(f"  {sid} (missing in current dataset)")
+            continue
         print(f"  {sid} types={sensor.sensor_types} notes={sensor.operator_notes!r}")
 
     out = (
@@ -186,13 +136,19 @@ def main() -> None:
 
         f.write("## In alarm_set but NOT in cleaned (NEW)\n\n")
         for sid in missing_from_cleaned:
-            sensor = next(s for s in sensors if s.file_id == sid)
+            sensor = sensors_by_id.get(sid)
+            if sensor is None:
+                f.write(f"- **{sid}** (missing in current dataset)\n")
+                continue
             f.write(
                 f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n"
             )
         f.write("\n## In cleaned but NOT in alarm_set\n\n")
         for sid in extra_in_cleaned:
-            sensor = next(s for s in sensors if s.file_id == sid)
+            sensor = sensors_by_id.get(sid)
+            if sensor is None:
+                f.write(f"- **{sid}** (missing in current dataset)\n")
+                continue
             f.write(
                 f"- **{sid}** types={list(sensor.sensor_types)} `{sensor.operator_notes}`\n"
             )
