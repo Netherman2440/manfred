@@ -14,6 +14,7 @@ from app.runtime.background_tasks import BackgroundTaskRegistry
 from app.runtime.cancellation import ActiveRunRegistry
 from app.services.agent_loader import AgentLoader
 from app.services.agent_template_service import AgentTemplateService
+from app.services.aidevs.negotiations import BaseNegotiationsService, NegotiationsService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
 from app.services.filesystem import AgentFilesystemService
@@ -50,6 +51,12 @@ from app.tools.definitions.get_broken_sensors import build_get_broken_sensors_to
 from app.tools.definitions.get_sensors import build_get_sensors_tool
 from app.tools.definitions.interprete_image import build_interprete_image_tool
 from app.tools.definitions.message import message_tool
+from app.tools.definitions.negotiations import (
+    build_get_cities_for_item_tool,
+    build_get_items_for_city_tool,
+    build_list_cities_tool,
+    build_list_items_tool,
+)
 from app.tools.definitions.scrape_url import build_scrape_url_tool
 from app.tools.definitions.wait import wait_tool
 from app.tools.definitions.web_search import web_search_tool
@@ -61,6 +68,7 @@ def get_tools(
     filesystem_service: AgentFilesystemService,
     sensor_service: BaseSensorService,
     web_scraper_service: BaseWebScraperService,
+    negotiations_service: BaseNegotiationsService,
     settings: Settings,
 ) -> list[Tool]:
     return [
@@ -82,6 +90,10 @@ def get_tools(
         build_interprete_image_tool(settings),
         build_get_sensors_tool(sensor_service),
         build_get_broken_sensors_tool(sensor_service),
+        build_list_cities_tool(negotiations_service),
+        build_list_items_tool(negotiations_service),
+        build_get_cities_for_item_tool(negotiations_service),
+        build_get_items_for_city_tool(negotiations_service),
     ]
 
 
@@ -93,6 +105,7 @@ class Container(containers.DeclarativeContainer):
             "app.api.v1.agents",
             "app.api.v1.chat",
             "app.api.v1.models",
+            "app.api.v1.negotiations",
             "app.api.v1.tools",
             "app.api.v1.users",
         ],
@@ -158,6 +171,13 @@ class Container(containers.DeclarativeContainer):
             settings=settings,
         ),
     )
+    negotiations_service = providers.Singleton(
+        NegotiationsService,
+        csv_dir=providers.Callable(
+            lambda repo_root: repo_root / "resources" / "negotiations",
+            repo_root=repo_root,
+        ),
+    )
     web_scraper_service = providers.Singleton(
         FirecrawlScraperService,
         api_key=settings.provided.FIRECRAWL_API_KEY,
@@ -169,6 +189,7 @@ class Container(containers.DeclarativeContainer):
             filesystem_service=filesystem_service,
             sensor_service=sensor_service,
             web_scraper_service=web_scraper_service,
+            negotiations_service=negotiations_service,
             settings=settings,
         ),
     )
