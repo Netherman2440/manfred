@@ -16,9 +16,7 @@ class FirecrawlScraperService(BaseWebScraperService):
         self._api_key = api_key
         self._wait_for_ms = wait_for_ms
         self._only_main_content = only_main_content
-        self._client: AsyncFirecrawl | None = (
-            AsyncFirecrawl(api_key=api_key) if api_key else None
-        )
+        self._client: AsyncFirecrawl | None = AsyncFirecrawl(api_key=api_key) if api_key else None
 
     async def scrape(self, url: str) -> ScrapeResult:
         if self._client is None:
@@ -42,10 +40,7 @@ class FirecrawlScraperService(BaseWebScraperService):
 
         metadata = _extract(doc, "metadata") or {}
         final_url = (
-            _meta_get(metadata, "source_url")
-            or _meta_get(metadata, "sourceURL")
-            or _meta_get(metadata, "url")
-            or url
+            _meta_get(metadata, "source_url") or _meta_get(metadata, "sourceURL") or _meta_get(metadata, "url") or url
         )
         status_code = _meta_get(metadata, "status_code") or _meta_get(metadata, "statusCode")
         try:

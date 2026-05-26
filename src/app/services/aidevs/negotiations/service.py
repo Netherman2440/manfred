@@ -135,9 +135,7 @@ class NegotiationsService(BaseNegotiationsService):
         with path.open("r", encoding="utf-8", newline="") as fh:
             reader = csv.DictReader(fh)
             for row in reader:
-                connections.append(
-                    Connection(item_code=row["itemCode"], city_code=row["cityCode"])
-                )
+                connections.append(Connection(item_code=row["itemCode"], city_code=row["cityCode"]))
         return connections
 
     def _build_indexes(self) -> None:
