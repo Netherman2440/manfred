@@ -6,3 +6,4 @@ __pycache__/
 .agent_data/workspaces
 .idea/*
 .agent_data/*
+resources/*

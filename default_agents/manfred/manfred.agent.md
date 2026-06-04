@@ -11,6 +11,7 @@ tools:
   - search_file
   - write_file
   - manage_file
+  - scrape_url
 ---
 
 # Manfred

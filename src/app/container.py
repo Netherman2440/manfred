@@ -14,6 +14,7 @@ from app.runtime.background_tasks import BackgroundTaskRegistry
 from app.runtime.cancellation import ActiveRunRegistry
 from app.services.agent_loader import AgentLoader
 from app.services.agent_template_service import AgentTemplateService
+from app.services.aidevs.negotiations import BaseNegotiationsService, NegotiationsService
 from app.services.chat_attachments import ChatAttachmentStorageService
 from app.services.chat_service import ChatService
 from app.services.filesystem import AgentFilesystemService
@@ -25,13 +26,17 @@ from app.services.memory import (
     ObserveUseCase,
 )
 from app.services.model_catalog_service import ModelCatalogService
+from app.services.sensors import BaseSensorService, SensorService
 from app.services.session_query_service import SessionQueryService
 from app.services.tiktokenizer import TiktokenizerService
 from app.services.tool_catalog_service import ToolCatalogService
+from app.services.web_scraper import BaseWebScraperService, FirecrawlScraperService
 from app.services.workspace_layout import WorkspaceLayoutService
 from app.tools.definitions.aidevs import (
+    build_execute_cmd_tool,
     build_fetch_aidevs_data_tool,
     build_mail_api_tool,
+    build_save_them_tools_tool,
     build_submit_task_tool,
 )
 from app.tools.definitions.ask_user import ask_user_tool
@@ -43,7 +48,18 @@ from app.tools.definitions.filesystem import (
     build_search_file_tool,
     build_write_file_tool,
 )
+from app.tools.definitions.get_broken_sensors import build_get_broken_sensors_tool
+from app.tools.definitions.get_sensors import build_get_sensors_tool
+from app.tools.definitions.interprete_image import build_interprete_image_tool
 from app.tools.definitions.message import message_tool
+from app.tools.definitions.negotiations import (
+    build_get_cities_for_item_tool,
+    build_get_items_for_city_tool,
+    build_list_cities_tool,
+    build_list_items_tool,
+)
+from app.tools.definitions.scrape_url import build_scrape_url_tool
+from app.tools.definitions.wait import wait_tool
 from app.tools.definitions.web_search import web_search_tool
 from app.tools.registry import ToolRegistry
 from app.utils.paths import default_user_workspace_path, get_repo_root, resolve_relative_path
@@ -51,6 +67,9 @@ from app.utils.paths import default_user_workspace_path, get_repo_root, resolve_
 
 def get_tools(
     filesystem_service: AgentFilesystemService,
+    sensor_service: BaseSensorService,
+    web_scraper_service: BaseWebScraperService,
+    negotiations_service: BaseNegotiationsService,
     settings: Settings,
 ) -> list[Tool]:
     return [
@@ -58,7 +77,9 @@ def get_tools(
         delegate_tool,
         ask_user_tool,
         message_tool,
+        wait_tool,
         web_search_tool,
+        build_scrape_url_tool(web_scraper_service),
         build_read_file_tool(filesystem_service),
         build_search_file_tool(filesystem_service),
         build_write_file_tool(filesystem_service),
@@ -66,6 +87,15 @@ def get_tools(
         build_submit_task_tool(settings),
         build_fetch_aidevs_data_tool(settings),
         build_mail_api_tool(settings),
+        build_save_them_tools_tool(settings),
+        build_execute_cmd_tool(settings),
+        build_interprete_image_tool(settings),
+        build_get_sensors_tool(sensor_service),
+        build_get_broken_sensors_tool(sensor_service),
+        build_list_cities_tool(negotiations_service),
+        build_list_items_tool(negotiations_service),
+        build_get_cities_for_item_tool(negotiations_service),
+        build_get_items_for_city_tool(negotiations_service),
     ]
 
 
@@ -77,6 +107,7 @@ class Container(containers.DeclarativeContainer):
             "app.api.v1.agents",
             "app.api.v1.chat",
             "app.api.v1.models",
+            "app.api.v1.negotiations",
             "app.api.v1.tools",
             "app.api.v1.users",
         ],
@@ -126,11 +157,41 @@ class Container(containers.DeclarativeContainer):
         max_file_size=settings.provided.MAX_FILE_SIZE,
         exclude_patterns=settings.provided.filesystem_exclude_patterns.call(),
     )
+    sensor_service = providers.Singleton(
+        SensorService,
+        sensors_dir=providers.Callable(
+            lambda repo_root, settings: (
+                repo_root
+                / settings.WORKSPACE_PATH
+                / settings.DEFAULT_USER_ID
+                / "shared"
+                / "aidevs"
+                / "data"
+                / "sensors"
+            ),
+            repo_root=repo_root,
+            settings=settings,
+        ),
+    )
+    negotiations_service = providers.Singleton(
+        NegotiationsService,
+        csv_dir=providers.Callable(
+            lambda repo_root: repo_root / "resources" / "negotiations",
+            repo_root=repo_root,
+        ),
+    )
+    web_scraper_service = providers.Singleton(
+        FirecrawlScraperService,
+        api_key=settings.provided.FIRECRAWL_API_KEY,
+    )
     tool_registry = providers.Singleton(
         ToolRegistry,
         tools=providers.Callable(
             get_tools,
             filesystem_service=filesystem_service,
+            sensor_service=sensor_service,
+            web_scraper_service=web_scraper_service,
+            negotiations_service=negotiations_service,
             settings=settings,
         ),
     )

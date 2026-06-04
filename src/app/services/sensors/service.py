@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import json
+import logging
+import threading
+from pathlib import Path
+
+from app.services.sensors.base import BaseSensorService
+from app.services.sensors.models import SensorReading
+from app.services.sensors.range_parser import RangeSegment, parse_range
+
+logger = logging.getLogger("app.services.sensors")
+
+_TYPE_TO_FIELD: dict[str, str] = {
+    "temperature": "temperature_K",
+    "pressure": "pressure_bar",
+    "water": "water_level_meters",
+    "voltage": "voltage_supply_v",
+    "humidity": "humidity_percent",
+}
+
+
+class SensorService(BaseSensorService):
+    def __init__(self, *, sensors_dir: Path) -> None:
+        self._sensors_dir = Path(sensors_dir)
+        self._sensors: list[SensorReading] | None = None
+        self._lock = threading.Lock()
+
+    def load_sensors(self) -> None:
+        with self._lock:
+            if self._sensors is not None:
+                return
+            self._sensors = self._load_from_disk()
+            logger.info(
+                "Loaded %d sensor readings from %s",
+                len(self._sensors),
+                self._sensors_dir,
+            )
+
+    def get_sensors(
+        self,
+        *,
+        ids: list[str] | None = None,
+        sensor_type: str | None = None,
+        temp_range: str | None = None,
+        pressure_range: str | None = None,
+        water_range: str | None = None,
+        voltage_range: str | None = None,
+        humidity_range: str | None = None,
+        notes_contains: str | list[str] | None = None,
+    ) -> list[SensorReading]:
+        if self._sensors is None:
+            self.load_sensors()
+        assert self._sensors is not None
+
+        if notes_contains is None:
+            needles: list[str] | None = None
+        elif isinstance(notes_contains, str):
+            stripped = notes_contains.strip()
+            needles = [stripped.lower()] if stripped else None
+        else:
+            needles = [n.strip().lower() for n in notes_contains if n and n.strip()] or None
+        type_filter = sensor_type.lower() if sensor_type else None
+        id_filter = {i for i in ids} if ids else None
+
+        def _parse(spec: str | None) -> list[RangeSegment] | None:
+            return parse_range(spec) if spec is not None else None
+
+        temp_segments = _parse(temp_range)
+        pressure_segments = _parse(pressure_range)
+        water_segments = _parse(water_range)
+        voltage_segments = _parse(voltage_range)
+        humidity_segments = _parse(humidity_range)
+
+        def _matches(segments: list[RangeSegment] | None, value: float) -> bool:
+            if segments is None:
+                return True
+            return any(seg.matches(value) for seg in segments)
+
+        results: list[SensorReading] = []
+        for sensor in self._sensors:
+            if id_filter is not None and sensor.file_id not in id_filter:
+                continue
+            if type_filter is not None and type_filter not in sensor.sensor_types:
+                continue
+            if not _matches(temp_segments, sensor.temperature_K):
+                continue
+            if not _matches(pressure_segments, sensor.pressure_bar):
+                continue
+            if not _matches(water_segments, sensor.water_level_meters):
+                continue
+            if not _matches(voltage_segments, sensor.voltage_supply_v):
+                continue
+            if not _matches(humidity_segments, sensor.humidity_percent):
+                continue
+            if needles is not None:
+                notes_lower = sensor.operator_notes.lower()
+                if not any(n in notes_lower for n in needles):
+                    continue
+            results.append(sensor)
+        return results
+
+    def get_broken_sensors(self, sensor_type: str) -> list[SensorReading]:
+        if self._sensors is None:
+            self.load_sensors()
+        assert self._sensors is not None
+
+        type_filter = sensor_type.lower()
+        all_fields = set(_TYPE_TO_FIELD.values())
+
+        results: list[SensorReading] = []
+        for sensor in self._sensors:
+            if type_filter not in sensor.sensor_types:
+                continue
+            expected = {_TYPE_TO_FIELD[t] for t in sensor.sensor_types if t in _TYPE_TO_FIELD}
+            forbidden = all_fields - expected
+            if any(getattr(sensor, field) for field in forbidden):
+                results.append(sensor)
+        return results
+
+    def _load_from_disk(self) -> list[SensorReading]:
+        if not self._sensors_dir.is_dir():
+            raise FileNotFoundError(f"Sensors directory not found: {self._sensors_dir}")
+
+        files = sorted(self._sensors_dir.glob("*.json"))
+        sensors: list[SensorReading] = []
+        for path in files:
+            with path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            sensor_types = tuple(part.strip().lower() for part in str(data["sensor_type"]).split("/") if part.strip())
+            sensors.append(
+                SensorReading(
+                    file_id=path.stem,
+                    sensor_types=sensor_types,
+                    timestamp=int(data["timestamp"]),
+                    temperature_K=float(data["temperature_K"]),
+                    pressure_bar=float(data["pressure_bar"]),
+                    water_level_meters=float(data["water_level_meters"]),
+                    voltage_supply_v=float(data["voltage_supply_v"]),
+                    humidity_percent=float(data["humidity_percent"]),
+                    operator_notes=str(data["operator_notes"]),
+                )
+            )
+        return sensors
