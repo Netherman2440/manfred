@@ -1667,15 +1667,12 @@ class Runner:
         anomaly), keep everything rather than emit an orphan.
         """
         while True:
-            present_call_ids = {
-                item.call_id for item in items[start:] if item.type == ItemType.FUNCTION_CALL
-            }
+            present_call_ids = {item.call_id for item in items[start:] if item.type == ItemType.FUNCTION_CALL}
             orphan = next(
                 (
                     item
                     for item in items[start:]
-                    if item.type == ItemType.FUNCTION_CALL_OUTPUT
-                    and item.call_id not in present_call_ids
+                    if item.type == ItemType.FUNCTION_CALL_OUTPUT and item.call_id not in present_call_ids
                 ),
                 None,
             )
