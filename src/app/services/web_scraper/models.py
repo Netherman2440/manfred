@@ -9,6 +9,7 @@ class ScrapeResult:
     markdown: str
     byte_count: int
     status_code: int | None = None
+    html: str | None = None
 
 
 class WebScraperError(Exception):

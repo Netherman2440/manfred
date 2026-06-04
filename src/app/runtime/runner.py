@@ -1583,12 +1583,13 @@ class Runner:
         list[ProviderMessageInputItem | ProviderFunctionCallInputItem | ProviderFunctionCallOutputInputItem],
         ProviderRequest,
     ]:
-        request_input = self.map_items_to_provider_input(context.items)
+        memory_text = self._load_agent_memory(context)
+        items = self._select_unobserved_items(context, memory_active=bool(memory_text))
+        request_input = self.map_items_to_provider_input(items)
         fs_instructions = self.filesystem_service.generate_filesystem_instructions()
         task = (context.agent.config.task or "").strip()
         instructions = f"{task}\n\n{fs_instructions}" if task else fs_instructions
 
-        memory_text = self._load_agent_memory(context)
         if memory_text:
             from app.services.memory.prompts import (
                 current_task_block,
@@ -1612,6 +1613,85 @@ class Runner:
             signal=signal,
         )
         return request_input, request
+
+    def _select_unobserved_items(
+        self,
+        context: AgentRunContext,
+        *,
+        memory_active: bool,
+    ) -> list[Item]:
+        """Drop items already folded into memory.md, keep only the unobserved tail.
+
+        When observational memory is active, everything up to and including
+        ``last_observed_item_id`` is already summarised in memory.md (injected
+        into the system prompt). Sending those items again duplicates context, so
+        we strip them and let memory.md stand in for the dropped history.
+
+        Only the root agent tracks an observation cursor (mirrors
+        ``ObserveUseCase._collect_unobserved``); sub-agents keep their full list.
+        Falls back to the full list when memory is off, no cursor is set, the
+        cursor item is missing, or the tail would be empty (avoids an inputless
+        request).
+
+        The cut is healed so the tail never begins with an orphaned tool output:
+        if a kept ``FUNCTION_CALL_OUTPUT`` has its ``FUNCTION_CALL`` before the cut
+        (e.g. an ``ask_user`` call persisted during a waiting turn, its output
+        arriving next turn), the call is pulled back in — otherwise the provider
+        rejects the unpaired output.
+        """
+        if not memory_active:
+            return context.items
+        if context.agent.id != context.session.root_agent_id:
+            return context.items
+        cursor_id = context.session.last_observed_item_id
+        if not cursor_id:
+            return context.items
+        items = context.items
+        cursor_index = next(
+            (i for i, item in enumerate(items) if item.id == cursor_id),
+            None,
+        )
+        if cursor_index is None:
+            return items
+        start = self._heal_orphan_tool_outputs(items, cursor_index + 1)
+        tail = items[start:]
+        return tail or items
+
+    @staticmethod
+    def _heal_orphan_tool_outputs(items: list[Item], start: int) -> int:
+        """Lower ``start`` until no kept FUNCTION_CALL_OUTPUT is missing its call.
+
+        Each pass finds an output whose ``call_id`` has no FUNCTION_CALL in the
+        tail and moves the cut back to include that call. ``start`` strictly
+        decreases, so this terminates. If a call is missing entirely (data
+        anomaly), keep everything rather than emit an orphan.
+        """
+        while True:
+            present_call_ids = {
+                item.call_id for item in items[start:] if item.type == ItemType.FUNCTION_CALL
+            }
+            orphan = next(
+                (
+                    item
+                    for item in items[start:]
+                    if item.type == ItemType.FUNCTION_CALL_OUTPUT
+                    and item.call_id not in present_call_ids
+                ),
+                None,
+            )
+            if orphan is None:
+                return start
+            call_index = next(
+                (
+                    j
+                    for j in range(start - 1, -1, -1)
+                    if items[j].type == ItemType.FUNCTION_CALL and items[j].call_id == orphan.call_id
+                ),
+                None,
+            )
+            if call_index is None:
+                return 0
+            start = call_index
 
     def _load_agent_memory(self, context: AgentRunContext) -> str | None:
         if not self.observational_memory_enabled:

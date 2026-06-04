@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from firecrawl import AsyncFirecrawl
@@ -18,18 +19,29 @@ class FirecrawlScraperService(BaseWebScraperService):
         self._only_main_content = only_main_content
         self._client: AsyncFirecrawl | None = AsyncFirecrawl(api_key=api_key) if api_key else None
 
-    async def scrape(self, url: str) -> ScrapeResult:
+    async def scrape(
+        self,
+        url: str,
+        *,
+        actions: Sequence[dict[str, Any]] | None = None,
+        formats: Sequence[str] = ("markdown",),
+        only_main_content: bool | None = None,
+        wait_for: int | None = None,
+    ) -> ScrapeResult:
         if self._client is None:
             raise WebScraperError(
                 "Firecrawl is not configured — set FIRECRAWL_API_KEY in the environment to enable scrape_url"
             )
+        format_list = list(formats) or ["markdown"]
+        kwargs: dict[str, Any] = {
+            "formats": format_list,
+            "only_main_content": self._only_main_content if only_main_content is None else only_main_content,
+            "wait_for": self._wait_for_ms if wait_for is None else wait_for,
+        }
+        if actions:
+            kwargs["actions"] = list(actions)
         try:
-            doc = await self._client.scrape(
-                url,
-                formats=["markdown"],
-                only_main_content=self._only_main_content,
-                wait_for=self._wait_for_ms,
-            )
+            doc = await self._client.scrape(url, **kwargs)
         except Exception as exc:
             logger.exception("Firecrawl scrape failed for %s", url)
             raise WebScraperError(f"Firecrawl scrape failed: {exc}") from exc
@@ -37,6 +49,10 @@ class FirecrawlScraperService(BaseWebScraperService):
         markdown = _extract(doc, "markdown") or ""
         if not isinstance(markdown, str):
             raise WebScraperError(f"Firecrawl returned non-string markdown for {url}: {type(markdown).__name__}")
+
+        html = _extract(doc, "html")
+        if html is not None and not isinstance(html, str):
+            raise WebScraperError(f"Firecrawl returned non-string html for {url}: {type(html).__name__}")
 
         metadata = _extract(doc, "metadata") or {}
         final_url = (
@@ -53,6 +69,7 @@ class FirecrawlScraperService(BaseWebScraperService):
             markdown=markdown,
             byte_count=len(markdown.encode("utf-8")),
             status_code=status_code_int,
+            html=html,
         )
 
 
