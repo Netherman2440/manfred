@@ -19,6 +19,7 @@ from app.api.v1.chat.schema import (
 from app.config import Settings
 from app.container import Container
 from app.providers import ProviderStreamEvent, serialize_provider_stream_event
+from app.runtime.stream_events import RuntimeStreamEvent, serialize_runtime_stream_event
 from app.services.chat_attachments import IncomingAttachment
 from app.services.chat_service import (
     ChatService,
@@ -226,7 +227,9 @@ async def cancel(
         chat_service.close()
 
 
-def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent) -> str:
+def _serialize_sse_event(
+    event: ProviderStreamEvent | RuntimeStreamEvent | ChatStreamSessionEvent,
+) -> str:
     if isinstance(event, ChatStreamSessionEvent):
         payload = json.dumps(
             {
@@ -236,6 +239,10 @@ def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent) ->
             },
             ensure_ascii=True,
         )
+        return f"event: {event.type}\ndata: {payload}\n\n"
+
+    if isinstance(event, RuntimeStreamEvent):
+        payload = json.dumps(serialize_runtime_stream_event(event), ensure_ascii=True)
         return f"event: {event.type}\ndata: {payload}\n\n"
 
     payload = json.dumps(serialize_provider_stream_event(event), ensure_ascii=True)

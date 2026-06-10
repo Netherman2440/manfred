@@ -605,7 +605,7 @@ async def test_runner_marks_stream_run_as_cancelled(db_session: Session) -> None
     agent = AgentRepository(db_session).get(agent_id)
     stored_items = ItemRepository(db_session).list_by_agent(agent_id)
 
-    assert streamed_event_types == ["text_delta"]
+    assert streamed_event_types == ["text_delta", "agent.cancelled"]
     assert agent is not None
     assert agent.status == AgentStatus.CANCELLED
     assert [item.type.value for item in stored_items] == ["message", "message"]
@@ -643,7 +643,7 @@ async def test_runner_persists_partial_stream_text_when_stream_ends_without_fina
     agent = AgentRepository(db_session).get(agent_id)
     stored_items = ItemRepository(db_session).list_by_agent(agent_id)
 
-    assert streamed_event_types == ["text_delta", "text_delta", "error"]
+    assert streamed_event_types == ["text_delta", "text_delta", "error", "agent.failed"]
     assert agent is not None
     assert agent.status == AgentStatus.FAILED
     assert [item.type.value for item in stored_items] == ["message", "message"]
@@ -832,6 +832,7 @@ async def test_runner_stream_emits_text_events_and_persists_output(db_session: S
         "text_delta",
         "text_done",
         "done",
+        "agent.completed",
     ]
     assert stored_items[-1].content == "Final answer"
     assert event_types == [
@@ -918,9 +919,11 @@ async def test_runner_stream_continues_after_tool_call(db_session: Session) -> N
         "function_call_delta",
         "function_call_done",
         "done",
+        "tool.completed",
         "text_delta",
         "text_done",
         "done",
+        "agent.completed",
     ]
     assert [item.type.value for item in stored_items[1:]] == [
         "function_call",
