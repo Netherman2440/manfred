@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.cli.app import ManfredCli, _coerce_output, _short
-from app.cli.client import StreamEvent
+pytest.importorskip("textual")
+pytest.importorskip("httpx")
+
+from app.cli.app import ManfredCli, _coerce_output, _short  # noqa: E402
+from app.cli.client import StreamEvent  # noqa: E402
 
 
 def _event(kind: str, **data: object) -> StreamEvent:

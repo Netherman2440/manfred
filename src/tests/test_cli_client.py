@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import httpx
 import pytest
 
-from app.cli.client import ManfredClient, ManfredClientError
+httpx = pytest.importorskip("httpx")
+
+from app.cli.client import ManfredClient, ManfredClientError  # noqa: E402
 
 _SSE_BODY = (
     "event: session\n"
