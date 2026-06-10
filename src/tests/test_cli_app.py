@@ -136,6 +136,24 @@ async def test_agent_failed_after_error_event_not_double_printed() -> None:
         assert app._running is False
 
 
+@pytest.mark.asyncio
+async def test_queue_without_session_falls_back_to_send() -> None:
+    app = ManfredCli(base_url="http://localhost:3000", agent="manfred")
+    async with app.run_test():
+        sent: list[str] = []
+
+        async def _fake_send(text: str) -> None:
+            sent.append(text)
+
+        app._send_message = _fake_send  # type: ignore[method-assign]
+        # Stale "running" with no session: queueing must not error — it sends.
+        app._running = True
+        app._session_id = None
+        await app._queue_message("hello again")
+        assert sent == ["hello again"]
+        assert app._running is False
+
+
 def test_short_truncates_and_serializes() -> None:
     assert _short("abc", 10) == "abc"
     assert _short("a" * 20, 10).endswith("…")

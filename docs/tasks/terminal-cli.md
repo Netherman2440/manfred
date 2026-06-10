@@ -7,7 +7,7 @@ Branch: `feat/terminal-cli`
 
 ## Part C — `manfred` one-command launcher
 
-`app/cli/launcher.py` + `install.sh`. `install.sh` runs `uv sync --extra cli`
+`app/cli/launcher.py` + `install.sh`. `install.sh` runs `uv sync`
 and writes a `~/.local/bin/manfred` shim → `cd REPO/src && exec .venv/bin/python
 -m app.cli.launcher`. Tier 1 (personal, repo present); no standalone binary.
 
@@ -32,8 +32,8 @@ launch + the shim (hard to drive headlessly).
 cd manfred_backend/src && uv run python -m app.main      # :3000
 
 # terminal client (another terminal)
-cd manfred_backend/src && uv sync --extra cli
-uv run --extra cli python -m app.cli                     # or --url / --agent
+cd manfred_backend/src && uv sync
+uv run python -m app.cli                     # or --url / --agent
 ```
 
 ## What landed
@@ -46,7 +46,8 @@ uv run --extra cli python -m app.cli                     # or --url / --agent
 - `app/cli/` — `client.py` (httpx + SSE), `app.py` (Textual TUI), `__main__.py`.
 - Tests: `test_stream_events.py`, `test_cli_app.py`, runtime-event wire test in
   `test_chat_stream_api.py`; existing runner-event tests updated for new events.
-- `cli` optional dependency extra (textual, httpx) in `pyproject.toml`.
+- `textual` + `httpx` added to core `dependencies` in `pyproject.toml`
+  (so plain `uv sync` installs them and `manfred` always works).
 
 A Claude-Code-style terminal interface for Manfred, plus the backend SSE
 change it depends on. Two self-contained parts. Part A (backend) is a

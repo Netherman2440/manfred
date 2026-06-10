@@ -286,6 +286,13 @@ class ManfredCli(App[None]):
         except ManfredClientError as exc:
             self._write_error(str(exc))
             self._finalize_run("failed")
+        except Exception as exc:  # noqa: BLE001 - never leave the UI stuck "running"
+            self._write_error(f"Stream error: {exc}")
+            self._finalize_run("failed")
+        finally:
+            # Guard against a stream that closed without a terminal event.
+            if self._running:
+                self._finalize_run("completed")
 
     def _on_stream_event(self, event: StreamEvent) -> None:
         kind = event.event
@@ -359,15 +366,23 @@ class ManfredCli(App[None]):
     async def _deliver_run(self, agent_id: str, call_id: str, answer: str) -> None:
         try:
             response = await self._client.deliver(agent_id, call_id=call_id, output=answer)
+            self._render_chat_response(response)
         except ManfredClientError as exc:
             self._write_error(str(exc))
             self._finalize_run("failed")
-            return
-        self._render_chat_response(response)
+        except Exception as exc:  # noqa: BLE001 - never leave the UI stuck "running"
+            self._write_error(f"Deliver error: {exc}")
+            self._finalize_run("failed")
+        finally:
+            if self._running:
+                self._finalize_run("completed")
 
     async def _queue_message(self, text: str) -> None:
+        # Queue only makes sense against an active session; without one the
+        # "running" flag is stale, so start a fresh message instead.
         if not self._session_id:
-            self._write_error("No active run to queue against.")
+            self._running = False
+            await self._send_message(text)
             return
         try:
             result = await self._client.queue(self._session_id, text)

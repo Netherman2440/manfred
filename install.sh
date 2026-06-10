@@ -7,8 +7,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$REPO/src"
 BIN="${MANFRED_BIN_DIR:-$HOME/.local/bin}"
 
-echo "Syncing dependencies (with cli extra)…"
-( cd "$SRC" && uv sync --extra cli )
+echo "Syncing dependencies…"
+( cd "$SRC" && uv sync )
 
 mkdir -p "$BIN"
 SHIM="$BIN/manfred"
