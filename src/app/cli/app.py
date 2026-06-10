@@ -17,6 +17,14 @@ from textual.widgets import Input, RichLog, Static
 from app.cli.client import Attachment, ManfredClient, ManfredClientError, StreamEvent
 
 _ATTACHMENT_RE = re.compile(r"@(\S+)")
+
+_BANNER = r"""
+ __  __    _    _   _ _____ ____  _____ ____
+|  \/  |  / \  | \ | |  ___|  _ \| ____|  _ \
+| |\/| | / _ \ |  \| | |_  | |_) |  _| | | | |
+| |  | |/ ___ \| |\  |  _| |  _ <| |___| |_| |
+|_|  |_/_/   \_\_| \_|_|   |_| \_\_____|____/
+"""
 _COMMANDS = {
     "/new": "Start a fresh session",
     "/sessions": "List past sessions",
@@ -42,6 +50,9 @@ class ManfredCli(App[None]):
     """
 
     BINDINGS = [("escape", "cancel", "Cancel run"), ("ctrl+c", "quit", "Quit")]
+    # The built-in command palette (ctrl+p) is unused here; disable it so it
+    # can't intercept keys or surprise the user.
+    ENABLE_COMMAND_PALETTE = False
 
     def __init__(self, *, base_url: str, agent: str | None = None) -> None:
         super().__init__()
@@ -68,8 +79,13 @@ class ManfredCli(App[None]):
             yield Static("›", id="sigil")
             yield Input(placeholder="Message Manfred…  (/help for commands)", id="input")
 
+    def _show_banner(self) -> None:
+        log = self.query_one("#log", RichLog)
+        log.write(Text(_BANNER, style="bold magenta"))
+
     async def on_mount(self) -> None:
         self.query_one("#input", Input).focus()
+        self._show_banner()
         self._write_system(f"Manfred CLI → {self._base_url}")
         if not await self._client.health():
             self._write_error("Backend not reachable. Start it with `uv run python -m app.main` and retry.")
@@ -126,6 +142,7 @@ class ManfredCli(App[None]):
             self._session_id = None
             self._waiting = None
             self.query_one("#log", RichLog).clear()
+            self._show_banner()
             self._write_system("Started a new session.")
             self._set_status("ready")
         elif cmd == "/agent":
