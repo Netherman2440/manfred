@@ -7,8 +7,15 @@ from starlette.requests import Request
 
 from app.api.v1.chat.api import cancel, chat
 from app.api.v1.chat.schema import ChatResponse, ChatStreamSessionEvent
+from app.domain import WaitingForEntry
 from app.providers import ProviderDoneEvent, ProviderErrorEvent, ProviderTextDeltaEvent, ProviderTextDoneEvent
 from app.providers.types import ProviderResponse, ProviderTextOutputItem
+from app.runtime.stream_events import (
+    AgentCompletedStreamEvent,
+    AgentWaitingStreamEvent,
+    ToolCompletedStreamEvent,
+    ToolFailedStreamEvent,
+)
 from app.services.chat_service import ChatServiceNotFoundError
 
 
@@ -152,6 +159,53 @@ async def test_chat_stream_returns_error_event_payload() -> None:
     assert "event: error" in body
     assert 'data: {"type": "error", "error": "setup failed", "code": null}' in body
     assert chat_service.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_serializes_runtime_events() -> None:
+    chat_service = FakeChatService(
+        [
+            ChatStreamSessionEvent(session_id="session-1", agent_id="agent-1"),
+            ToolCompletedStreamEvent(call_id="c1", name="calculator", output={"ok": True, "output": "4"}),
+            ToolFailedStreamEvent(call_id="c2", name="boom", error="kaboom"),
+            AgentWaitingStreamEvent(
+                waiting_for=[
+                    WaitingForEntry(
+                        call_id="c3",
+                        type="human",
+                        name="ask_user",
+                        description="What format?",
+                        agent_id="agent-1",
+                    )
+                ]
+            ),
+            AgentCompletedStreamEvent(agent_id="agent-1"),
+        ]
+    )
+
+    response = await chat(
+        _build_json_request(
+            {
+                "input": [{"type": "message", "role": "user", "content": "Hi"}],
+                "stream": True,
+            }
+        ),
+        chat_service=chat_service,
+    )
+
+    body = await _read_stream_body(response)
+
+    assert "event: tool.completed" in body
+    assert (
+        'data: {"type": "tool.completed", "call_id": "c1", "name": "calculator", '
+        '"output": {"ok": true, "output": "4"}}' in body
+    )
+    assert "event: tool.failed" in body
+    assert 'data: {"type": "tool.failed", "call_id": "c2", "name": "boom", "error": "kaboom"}' in body
+    assert "event: agent.waiting" in body
+    assert '"description": "What format?"' in body
+    assert "event: agent.completed" in body
+    assert 'data: {"type": "agent.completed", "agent_id": "agent-1"}' in body
 
 
 @pytest.mark.asyncio

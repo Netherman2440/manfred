@@ -57,10 +57,23 @@ from app.providers import (
 from app.runtime.cancellation import CancellationRequestedError, CancellationSignal
 from app.runtime.message_queue import SessionMessageQueue
 from app.runtime.runner_types import RunResult
+from app.runtime.stream_events import (
+    AgentCancelledStreamEvent,
+    AgentCompletedStreamEvent,
+    AgentFailedStreamEvent,
+    AgentWaitingStreamEvent,
+    RuntimeStreamEvent,
+    ToolCompletedStreamEvent,
+    ToolFailedStreamEvent,
+)
 from app.services.agent_loader import AgentLoader
 from app.services.filesystem import AgentFilesystemService
 from app.tools.registry import ToolRegistry
 from app.utils.string_validator import _require_non_empty_string
+
+# Provider (LLM-layer) events plus runtime events (tool results, agent status),
+# all carried in-order over the chat SSE stream.
+RunStreamEvent = ProviderStreamEvent | RuntimeStreamEvent
 
 
 @dataclass(slots=True)
@@ -248,7 +261,7 @@ class Runner:
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
         signal: CancellationSignal | None = None,
-    ) -> AsyncIterable[ProviderStreamEvent]:
+    ) -> AsyncIterable[RunStreamEvent]:
         if max_turns is None:
             max_turns = self.max_turns
         context = self.load_agent_context(
@@ -285,17 +298,23 @@ class Runner:
         )
 
         turns_executed = 0
+        streamed_call_ids: set[str] = set()
 
         while context.agent.status == AgentStatus.RUNNING:
             try:
                 signal.raise_if_cancelled()
             except CancellationRequestedError:
                 self._cancel_run(context)
+                yield AgentCancelledStreamEvent(agent_id=context.agent.id)
                 return
 
             if turns_executed >= max_turns:
                 result = self._fail_run(context, error="Agent exceeded max_turns.")
                 yield ProviderErrorEvent(error=result.error or "Agent exceeded max_turns.")
+                yield AgentFailedStreamEvent(
+                    agent_id=context.agent.id,
+                    error=result.error or "Agent exceeded max_turns.",
+                )
                 return
 
             self.event_bus.emit(
@@ -397,6 +416,9 @@ class Runner:
             context.agent = turn_result.agent
             total_usage = self._add_usage(total_usage, turn_result.usage)
 
+            for tool_event in self._drain_tool_output_events(context, streamed_call_ids):
+                yield tool_event
+
             if turn_result.status not in {"failed", "cancelled"}:
                 self.event_bus.emit(
                     TurnCompletedEvent(
@@ -408,6 +430,7 @@ class Runner:
 
             if turn_result.status == "cancelled":
                 self._cancel_run(context)
+                yield AgentCancelledStreamEvent(agent_id=context.agent.id)
                 return
 
             context.agent.turn_count += 1
@@ -426,6 +449,7 @@ class Runner:
                         waiting_for=list(context.agent.waiting_for),
                     )
                 )
+                yield AgentWaitingStreamEvent(waiting_for=list(context.agent.waiting_for))
                 return
 
             if turn_result.status == "completed":
@@ -437,6 +461,7 @@ class Runner:
                         result=self._find_run_result(context),
                     )
                 )
+                yield AgentCompletedStreamEvent(agent_id=context.agent.id)
                 return
 
             result = self._fail_run(
@@ -445,10 +470,68 @@ class Runner:
             )
             if not turn_result.error_emitted:
                 yield ProviderErrorEvent(error=result.error or "Agent execution failed.")
+            yield AgentFailedStreamEvent(
+                agent_id=context.agent.id,
+                error=result.error or "Agent execution failed.",
+            )
             return
 
         result = self._fail_run(context, error="Agent stopped unexpectedly.")
         yield ProviderErrorEvent(error=result.error or "Agent stopped unexpectedly.")
+        yield AgentFailedStreamEvent(
+            agent_id=context.agent.id,
+            error=result.error or "Agent stopped unexpectedly.",
+        )
+
+    def _drain_tool_output_events(
+        self,
+        context: AgentRunContext,
+        streamed_call_ids: set[str],
+    ) -> list[RuntimeStreamEvent]:
+        """Build tool-result stream events for newly-stored tool outputs.
+
+        Derives events from the ``function_call_output`` items the runner
+        appended to ``context.items`` this turn, deduped by ``call_id`` across
+        the whole run so reloaded contexts don't re-emit prior results.
+        """
+        events: list[RuntimeStreamEvent] = []
+        for item in context.items:
+            if item.type != ItemType.FUNCTION_CALL_OUTPUT:
+                continue
+            if not item.call_id or item.call_id in streamed_call_ids:
+                continue
+            streamed_call_ids.add(item.call_id)
+            result = self._parse_tool_output(item.output)
+            name = item.name or ""
+            if item.is_error:
+                events.append(
+                    ToolFailedStreamEvent(
+                        call_id=item.call_id,
+                        name=name,
+                        error=str(result.get("error") or "Tool execution failed."),
+                    )
+                )
+            else:
+                events.append(
+                    ToolCompletedStreamEvent(
+                        call_id=item.call_id,
+                        name=name,
+                        output=result,
+                    )
+                )
+        return events
+
+    @staticmethod
+    def _parse_tool_output(raw: str | None) -> dict[str, Any]:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return {"output": raw}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"output": parsed}
 
     async def execute_turn(
         self,
