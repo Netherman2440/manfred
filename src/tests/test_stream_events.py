@@ -94,9 +94,7 @@ async def test_stream_emits_tool_failed_for_failing_tool(db_session: Session) ->
                 ProviderFunctionCallDoneEvent(call_id="call-1", name="boom", arguments={}),
                 ProviderDoneEvent(
                     response=ProviderResponse(
-                        output=[
-                            ProviderFunctionCallOutputItem(call_id="call-1", name="boom", arguments={})
-                        ],
+                        output=[ProviderFunctionCallOutputItem(call_id="call-1", name="boom", arguments={})],
                         usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
                         finish_reason="tool_calls",
                     )
@@ -148,15 +146,16 @@ def test_serialize_runtime_stream_events() -> None:
         "output": {"ok": True, "output": "4"},
     }
 
-    assert serialize_runtime_stream_event(
-        ToolFailedStreamEvent(call_id="c1", name="boom", error="boom")
-    ) == {"type": "tool.failed", "call_id": "c1", "name": "boom", "error": "boom"}
+    assert serialize_runtime_stream_event(ToolFailedStreamEvent(call_id="c1", name="boom", error="boom")) == {
+        "type": "tool.failed",
+        "call_id": "c1",
+        "name": "boom",
+        "error": "boom",
+    }
 
     assert serialize_runtime_stream_event(
         AgentWaitingStreamEvent(
-            waiting_for=[
-                WaitingForEntry(call_id="c1", type="human", name="ask_user", description="Q?")
-            ]
+            waiting_for=[WaitingForEntry(call_id="c1", type="human", name="ask_user", description="Q?")]
         )
     ) == {
         "type": "agent.waiting",

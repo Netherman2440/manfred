@@ -72,9 +72,7 @@ class ManfredCli(App[None]):
         self.query_one("#input", Input).focus()
         self._write_system(f"Manfred CLI → {self._base_url}")
         if not await self._client.health():
-            self._write_error(
-                "Backend not reachable. Start it with `uv run python -m app.main` and retry."
-            )
+            self._write_error("Backend not reachable. Start it with `uv run python -m app.main` and retry.")
             self._set_status("offline")
             return
         try:
@@ -191,8 +189,7 @@ class ManfredCli(App[None]):
         for i, s in enumerate(sessions, start=1):
             title = s.get("title") or s.get("last_message_preview") or "(untitled)"
             self._write_system(
-                f" {i:>2}. [{s.get('root_agent_status', '?')}] {s.get('root_agent_name', '?')} · "
-                f"{title[:60]}"
+                f" {i:>2}. [{s.get('root_agent_status', '?')}] {s.get('root_agent_name', '?')} · {title[:60]}"
             )
         self._write_system("Use /resume <n> to open one.")
 
@@ -311,9 +308,7 @@ class ManfredCli(App[None]):
             self._assistant_buffer = ""
         self._enter_waiting_from_list(self._current_agent_id(entries), entries)
 
-    def _enter_waiting_from_list(
-        self, agent_id: str | None, entries: list[dict[str, Any]]
-    ) -> None:
+    def _enter_waiting_from_list(self, agent_id: str | None, entries: list[dict[str, Any]]) -> None:
         human = next((e for e in entries if e.get("type") == "human"), None)
         target = human or (entries[0] if entries else None)
         if target is None or agent_id is None:
@@ -458,9 +453,7 @@ class ManfredCli(App[None]):
 
     def _set_status(self, status: str) -> None:
         session = self._session_id[:8] if self._session_id else "new"
-        self.query_one("#status", Static).update(
-            f"agent: {self._agent_name}  ·  session: {session}  ·  {status}"
-        )
+        self.query_one("#status", Static).update(f"agent: {self._agent_name}  ·  session: {session}  ·  {status}")
 
     # ---- helpers ---------------------------------------------------------
 

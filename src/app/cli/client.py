@@ -94,10 +94,7 @@ class ManfredClient:
                 data["session_id"] = session_id
             if agent_name:
                 data["agent_name"] = agent_name
-            files = [
-                ("attachments", (att.file_name, att.content, att.media_type))
-                for att in attachments
-            ]
+            files = [("attachments", (att.file_name, att.content, att.media_type)) for att in attachments]
             request = self._client.build_request("POST", url, data=data, files=files)
         else:
             body: dict[str, Any] = {
