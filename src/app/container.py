@@ -101,8 +101,11 @@ def get_tools(
 
 class Container(containers.DeclarativeContainer):
     wiring_config = containers.WiringConfiguration(
+        # Wire only the API packages that use @inject/Provide. Do NOT wire the
+        # whole "app" package: its scan recursively imports every submodule
+        # (incl. app.cli, which pulls optional deps like textual/rich) at
+        # startup, so the backend would fail to boot without the `cli` extra.
         packages=[
-            "app",
             "app.api.v1",
             "app.api.v1.agents",
             "app.api.v1.chat",
