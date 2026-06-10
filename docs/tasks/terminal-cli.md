@@ -1,8 +1,29 @@
 # Task: Manfred Terminal Client (+ SSE streaming fix)
 
-Status: implemented — Parts A & B; tests green (162). Live TUI-vs-real-LLM run
-not performed (needs a running backend with an OpenRouter key).
-Branch: `feat/terminal-cli` (worktree)
+Status: implemented — Parts A, B & C; tests green (181). Live TUI-vs-real-LLM
+run not performed (needs an OpenRouter key); launcher boot path verified
+end-to-end (migrate + spawn + health + seed).
+Branch: `feat/terminal-cli`
+
+## Part C — `manfred` one-command launcher
+
+`app/cli/launcher.py` + `install.sh`. `install.sh` runs `uv sync --extra cli`
+and writes a `~/.local/bin/manfred` shim → `cd REPO/src && exec .venv/bin/python
+-m app.cli.launcher`. Tier 1 (personal, repo present); no standalone binary.
+
+Launcher flow: ensure `~/.manfred/` (db, agent_data, .env, logs); resolve the
+OpenRouter key (env → app-home .env → prompt once, stored chmod 600); if a
+backend is already healthy on the URL → attach the TUI; else run alembic
+programmatically against the app-home DB (`alembic.ini` hardcodes the URL, so
+override via `set_main_option`), spawn `python -m app.main` (cwd=REPO/src) with
+absolute `DATABASE_URL`/`WORKSPACE_PATH`, `MCP_CONFIG_PATH`=nonexistent (MCP
+off — native fs tools suffice), logs → `~/.manfred/logs/backend.log`, poll
+`/health` ≤30s, launch the TUI, SIGTERM the child on exit (only if we spawned).
+
+Verified end-to-end against a spare port: migrations applied to the app-home
+DB, backend boots healthy with no key + MCP off, `/users/me` seeds the manfred
+agent into `~/.manfred/agent_data`, clean shutdown. Untested: interactive TUI
+launch + the shim (hard to drive headlessly).
 
 ## How to run
 
