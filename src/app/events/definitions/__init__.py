@@ -32,6 +32,8 @@ AgentEvent = (
     | AgentFailedEvent
 )
 
+ToolStreamEvent = ToolCalledEvent | ToolCompletedEvent | ToolFailedEvent
+
 __all__ = [
     "AgentCancelledEvent",
     "AgentResumedEvent",
@@ -51,6 +53,7 @@ __all__ = [
     "ToolCalledEvent",
     "ToolCompletedEvent",
     "ToolFailedEvent",
+    "ToolStreamEvent",
     "TurnCompletedEvent",
     "TurnStartedEvent",
     "build_event_context",

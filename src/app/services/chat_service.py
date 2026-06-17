@@ -54,7 +54,7 @@ from app.domain.repositories import (
     SessionRepository,
     UserRepository,
 )
-from app.events import EventBus
+from app.events import EventBus, ToolStreamEvent
 from app.mcp import McpManager
 from app.providers import ProviderErrorEvent, ProviderRegistry, ProviderStreamEvent
 from app.runtime.cancellation import ActiveRunHandle, ActiveRunRegistry, CancellationSignal
@@ -229,7 +229,7 @@ class ChatService:
         chat_request: ChatRequest,
         *,
         attachments: list[IncomingAttachment] | None = None,
-    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent]:
+    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent | ToolStreamEvent]:
         active_run: ActiveRunHandle | None = None
         run_result: RunResult | None = None
         created_files: list[Path] = []
@@ -334,7 +334,7 @@ class ChatService:
         edit_request: ChatEditRequest,
         *,
         attachments: list[IncomingAttachment] | None = None,
-    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent]:
+    ) -> AsyncIterable[ProviderStreamEvent | ChatStreamSessionEvent | ToolStreamEvent]:
         active_run: ActiveRunHandle | None = None
         run_result: RunResult | None = None
         created_files: list[Path] = []
@@ -644,7 +644,7 @@ class ChatService:
         setup: PreparedChatSetup,
         *,
         signal: CancellationSignal,
-    ) -> AsyncIterable[ProviderStreamEvent]:
+    ) -> AsyncIterable[ProviderStreamEvent | ToolStreamEvent]:
         async for event in self.runner.run_agent_stream(
             setup.agent.id,
             last_agent_sequence=setup.last_sequence,

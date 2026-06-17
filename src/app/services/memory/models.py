@@ -12,5 +12,5 @@ class ObservationResult:
 @dataclass(slots=True, frozen=True)
 class ObserveOutcome:
     result: ObservationResult | None
-    status: str  # "success" | "locked" | "below_threshold" | "no_unobserved" | "error"
+    status: str  # "success" | "locked" | "below_threshold" | "no_unobserved" | "error" | "skipped"
     detail: str | None = None

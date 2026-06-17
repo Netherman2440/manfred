@@ -8,7 +8,6 @@ tools:
   - read_file
   - search_file
   - write_file
-  - ask_user
 ---
 
 # Azazel

@@ -918,6 +918,8 @@ async def test_runner_stream_continues_after_tool_call(db_session: Session) -> N
         "function_call_delta",
         "function_call_done",
         "done",
+        "tool.called",
+        "tool.completed",
         "text_delta",
         "text_done",
         "done",
@@ -940,6 +942,124 @@ async def test_runner_stream_continues_after_tool_call(db_session: Session) -> N
         "turn.completed",
         "agent.completed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_yields_sub_agent_tool_events(db_session: Session) -> None:
+    """Whole-tree: a delegated child's tool events stream out of the parent's run_agent_stream."""
+
+    async def calculator(
+        arguments: dict[str, object],
+        context: ToolExecutionContext,
+    ) -> dict[str, object]:
+        del context
+        return {"ok": True, "output": f"{arguments['value']}"}
+
+    calculator_tool = Tool(
+        type="sync",
+        definition=FunctionToolDefinition(
+            name="calculator",
+            description="Calculator",
+            parameters={"type": "object"},
+        ),
+        handler=calculator,
+    )
+
+    runner, agent_id, _event_types = make_runner(
+        db_session,
+        # Child runs via run_agent (non-stream) -> pops from provider_responses.
+        provider_responses=[
+            ProviderResponse(
+                output=[
+                    ProviderFunctionCallOutputItem(
+                        call_id="call-child",
+                        name="calculator",
+                        arguments={"value": 7},
+                    )
+                ],
+                usage=ProviderUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+            ),
+            ProviderResponse(
+                output=[ProviderTextOutputItem(text="Wynik dziecka")],
+                usage=ProviderUsage(input_tokens=4, output_tokens=2, total_tokens=6),
+            ),
+        ],
+        # Parent runs via run_agent_stream -> pops from provider_streams.
+        provider_streams=[
+            [
+                ProviderFunctionCallDoneEvent(
+                    call_id="call-parent",
+                    name="delegate",
+                    arguments={"agent_name": "helper", "task": "Policz to"},
+                ),
+                ProviderDoneEvent(
+                    response=ProviderResponse(
+                        output=[
+                            ProviderFunctionCallOutputItem(
+                                call_id="call-parent",
+                                name="delegate",
+                                arguments={"agent_name": "helper", "task": "Policz to"},
+                            )
+                        ],
+                        usage=ProviderUsage(input_tokens=8, output_tokens=3, total_tokens=11),
+                        finish_reason="tool_calls",
+                    )
+                ),
+            ],
+            [
+                ProviderTextDeltaEvent(delta="Wynik parenta"),
+                ProviderTextDoneEvent(text="Wynik parenta"),
+                ProviderDoneEvent(
+                    response=ProviderResponse(
+                        output=[ProviderTextOutputItem(text="Wynik parenta")],
+                        usage=ProviderUsage(input_tokens=6, output_tokens=4, total_tokens=10),
+                    )
+                ),
+            ],
+        ],
+        tools=[delegate_tool, calculator_tool],
+        agent_loader=FakeAgentLoader(
+            {
+                "helper": LoadedAgent(
+                    agent_name="helper",
+                    model="openrouter:test-model",
+                    tools=[calculator_tool.definition],
+                    system_prompt="Policz zadania.",
+                )
+            }
+        ),
+    )
+
+    events = [event async for event in runner.run_agent_stream(agent_id, last_agent_sequence=0)]
+    child = AgentRepository(db_session).list_children(agent_id)[0]
+
+    # The child's calculator tool events must reach the parent's stream, attributed to the child.
+    child_completed = [
+        event
+        for event in events
+        if event.type == "tool.completed" and event.name == "calculator"
+    ]
+    assert len(child_completed) == 1
+    assert child_completed[0].ctx.agent_id == child.id
+    assert child_completed[0].ctx.depth == 1
+    assert child_completed[0].output == {"ok": True, "output": "7"}
+
+    child_called = [
+        event
+        for event in events
+        if event.type == "tool.called" and event.name == "calculator"
+    ]
+    assert len(child_called) == 1
+    assert child_called[0].ctx.agent_id == child.id
+
+    # Parent's own delegate tool events also stream, attributed to the parent (depth 0).
+    parent_completed = [
+        event
+        for event in events
+        if event.type == "tool.completed" and event.name == "delegate"
+    ]
+    assert len(parent_completed) == 1
+    assert parent_completed[0].ctx.depth == 0
 
 
 @pytest.mark.asyncio

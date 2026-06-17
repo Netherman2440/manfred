@@ -18,6 +18,12 @@ from app.api.v1.chat.schema import (
 )
 from app.config import Settings
 from app.container import Container
+from app.events.definitions import (
+    ToolCalledEvent,
+    ToolCompletedEvent,
+    ToolFailedEvent,
+    ToolStreamEvent,
+)
 from app.providers import ProviderStreamEvent, serialize_provider_stream_event
 from app.services.chat_attachments import IncomingAttachment
 from app.services.chat_service import (
@@ -226,7 +232,7 @@ async def cancel(
         chat_service.close()
 
 
-def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent) -> str:
+def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent | ToolStreamEvent) -> str:
     if isinstance(event, ChatStreamSessionEvent):
         payload = json.dumps(
             {
@@ -238,8 +244,38 @@ def _serialize_sse_event(event: ProviderStreamEvent | ChatStreamSessionEvent) ->
         )
         return f"event: {event.type}\ndata: {payload}\n\n"
 
+    if isinstance(event, (ToolCalledEvent, ToolCompletedEvent, ToolFailedEvent)):
+        payload = json.dumps(_serialize_tool_stream_event(event), ensure_ascii=True)
+        return f"event: {event.type}\ndata: {payload}\n\n"
+
     payload = json.dumps(serialize_provider_stream_event(event), ensure_ascii=True)
     return f"event: {event.type}\ndata: {payload}\n\n"
+
+
+def _serialize_tool_stream_event(event: ToolStreamEvent) -> dict:
+    base = {
+        "type": event.type,
+        "call_id": event.call_id,
+        "name": event.name,
+        "agent_id": event.ctx.agent_id,
+        "parent_agent_id": event.ctx.parent_agent_id,
+        "depth": event.ctx.depth,
+    }
+    if isinstance(event, ToolCalledEvent):
+        return {**base, "arguments": event.arguments}
+    if isinstance(event, ToolCompletedEvent):
+        return {
+            **base,
+            "duration_ms": event.duration_ms,
+            "is_error": False,
+            "tool_result": event.output,
+        }
+    return {
+        **base,
+        "duration_ms": event.duration_ms,
+        "is_error": True,
+        "tool_result": {"ok": False, "error": event.error},
+    }
 
 
 async def _parse_chat_request(request: Request, max_file_size: int) -> tuple[ChatRequest, list[IncomingAttachment]]:

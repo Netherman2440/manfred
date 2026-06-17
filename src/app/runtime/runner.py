@@ -28,11 +28,13 @@ from app.events import (
     AgentResumedEvent,
     AgentStartedEvent,
     AgentWaitingEvent,
+    BaseEvent,
     EventBus,
     GenerationCompletedEvent,
     ToolCalledEvent,
     ToolCompletedEvent,
     ToolFailedEvent,
+    ToolStreamEvent,
     TurnCompletedEvent,
     TurnStartedEvent,
     build_event_context,
@@ -248,7 +250,7 @@ class Runner:
         last_agent_sequence: int = 0,
         trace_id: str | None = None,
         signal: CancellationSignal | None = None,
-    ) -> AsyncIterable[ProviderStreamEvent]:
+    ) -> AsyncIterable[ProviderStreamEvent | ToolStreamEvent]:
         if max_turns is None:
             max_turns = self.max_turns
         context = self.load_agent_context(
@@ -284,171 +286,193 @@ class Runner:
             )
         )
 
-        turns_executed = 0
+        # tool-event SSE bridge: buffer tool events for this run's whole agent tree
+        # (children share trace_id), drained into the stream after each turn.
+        tool_stream_buffer: list[BaseEvent] = []
 
-        while context.agent.status == AgentStatus.RUNNING:
-            try:
-                signal.raise_if_cancelled()
-            except CancellationRequestedError:
-                self._cancel_run(context)
-                return
+        def _collect_tool_stream_event(event: BaseEvent) -> None:
+            if event.ctx.trace_id == context.trace_id:
+                tool_stream_buffer.append(event)
 
-            if turns_executed >= max_turns:
-                result = self._fail_run(context, error="Agent exceeded max_turns.")
-                yield ProviderErrorEvent(error=result.error or "Agent exceeded max_turns.")
-                return
+        _tool_stream_unsubscribers = [
+            self.event_bus.subscribe("tool.called", _collect_tool_stream_event),
+            self.event_bus.subscribe("tool.completed", _collect_tool_stream_event),
+            self.event_bus.subscribe("tool.failed", _collect_tool_stream_event),
+        ]
 
-            self.event_bus.emit(
-                TurnStartedEvent(
-                    ctx=build_event_context(context.agent, context.trace_id),
-                    turn_count=context.agent.turn_count,
-                )
-            )
+        try:
+            turns_executed = 0
 
-            resolved = self.provider_registry.resolve(context.agent.config.model)
-            if resolved is None:
-                turn_result = TurnResult(
-                    status="failed",
-                    agent=context.agent,
-                    error=f"Unknown provider or model reference: {context.agent.config.model}",
-                )
-            else:
-                self._consume_pending_queue_inputs(context)
-                _request_input, request = self._build_provider_request(
-                    context,
-                    model=resolved.model,
-                    signal=signal,
-                )
-                generation_started_at = utcnow()
-                generation_timer_started_at = perf_counter()
-                response: ProviderResponse | None = None
-                partial_text_chunks: list[str] = []
-                partial_text_stored = False
-                turn_result = None
-
-                def store_partial_text_once() -> None:
-                    nonlocal partial_text_stored
-                    if partial_text_stored or response is not None:
-                        return
-                    self._store_partial_stream_text(
-                        context.agent,
-                        context.session,
-                        "".join(partial_text_chunks),
-                    )
-                    partial_text_stored = True
-
+            while context.agent.status == AgentStatus.RUNNING:
                 try:
-                    async for event in resolved.provider.stream(request):
-                        if isinstance(event, ProviderTextDeltaEvent) and event.delta:
-                            partial_text_chunks.append(event.delta)
-                        elif isinstance(event, ProviderTextDoneEvent) and event.text and not partial_text_chunks:
-                            partial_text_chunks.append(event.text)
-
-                        signal.raise_if_cancelled()
-                        if isinstance(event, ProviderDoneEvent):
-                            response = event.response
-                        elif isinstance(event, ProviderErrorEvent):
-                            store_partial_text_once()
-                            turn_result = TurnResult(
-                                status="failed",
-                                agent=context.agent,
-                                error=event.error,
-                                error_emitted=True,
-                            )
-                            break
-                        yield event
+                    signal.raise_if_cancelled()
                 except CancellationRequestedError:
-                    store_partial_text_once()
-                    turn_result = TurnResult(
-                        status="cancelled",
-                        agent=context.agent,
+                    self._cancel_run(context)
+                    return
+
+                if turns_executed >= max_turns:
+                    result = self._fail_run(context, error="Agent exceeded max_turns.")
+                    yield ProviderErrorEvent(error=result.error or "Agent exceeded max_turns.")
+                    return
+
+                self.event_bus.emit(
+                    TurnStartedEvent(
+                        ctx=build_event_context(context.agent, context.trace_id),
+                        turn_count=context.agent.turn_count,
                     )
-                except Exception as exc:
-                    store_partial_text_once()
+                )
+
+                resolved = self.provider_registry.resolve(context.agent.config.model)
+                if resolved is None:
                     turn_result = TurnResult(
                         status="failed",
                         agent=context.agent,
-                        error=str(exc) or "Provider call failed.",
+                        error=f"Unknown provider or model reference: {context.agent.config.model}",
                     )
+                else:
+                    self._consume_pending_queue_inputs(context)
+                    _request_input, request = self._build_provider_request(
+                        context,
+                        model=resolved.model,
+                        signal=signal,
+                    )
+                    generation_started_at = utcnow()
+                    generation_timer_started_at = perf_counter()
+                    response: ProviderResponse | None = None
+                    partial_text_chunks: list[str] = []
+                    partial_text_stored = False
+                    turn_result = None
 
-                if turn_result is None:
-                    if response is None:
+                    def store_partial_text_once() -> None:
+                        nonlocal partial_text_stored
+                        if partial_text_stored or response is not None:
+                            return
+                        self._store_partial_stream_text(
+                            context.agent,
+                            context.session,
+                            "".join(partial_text_chunks),
+                        )
+                        partial_text_stored = True
+
+                    try:
+                        async for event in resolved.provider.stream(request):
+                            if isinstance(event, ProviderTextDeltaEvent) and event.delta:
+                                partial_text_chunks.append(event.delta)
+                            elif isinstance(event, ProviderTextDoneEvent) and event.text and not partial_text_chunks:
+                                partial_text_chunks.append(event.text)
+
+                            signal.raise_if_cancelled()
+                            if isinstance(event, ProviderDoneEvent):
+                                response = event.response
+                            elif isinstance(event, ProviderErrorEvent):
+                                store_partial_text_once()
+                                turn_result = TurnResult(
+                                    status="failed",
+                                    agent=context.agent,
+                                    error=event.error,
+                                    error_emitted=True,
+                                )
+                                break
+                            yield event
+                    except CancellationRequestedError:
+                        store_partial_text_once()
+                        turn_result = TurnResult(
+                            status="cancelled",
+                            agent=context.agent,
+                        )
+                    except Exception as exc:
                         store_partial_text_once()
                         turn_result = TurnResult(
                             status="failed",
                             agent=context.agent,
-                            error="Provider stream ended without a final response.",
-                        )
-                    else:
-                        self._emit_generation_completed_event(
-                            context,
-                            model=resolved.model,
-                            request=request,
-                            response=response,
-                            generation_started_at=generation_started_at,
-                            generation_timer_started_at=generation_timer_started_at,
-                        )
-                        turn_result = await self.handle_turn_response(
-                            context,
-                            response,
-                            signal=signal,
+                            error=str(exc) or "Provider call failed.",
                         )
 
-            context.agent = turn_result.agent
-            total_usage = self._add_usage(total_usage, turn_result.usage)
+                    if turn_result is None:
+                        if response is None:
+                            store_partial_text_once()
+                            turn_result = TurnResult(
+                                status="failed",
+                                agent=context.agent,
+                                error="Provider stream ended without a final response.",
+                            )
+                        else:
+                            self._emit_generation_completed_event(
+                                context,
+                                model=resolved.model,
+                                request=request,
+                                response=response,
+                                generation_started_at=generation_started_at,
+                                generation_timer_started_at=generation_timer_started_at,
+                            )
+                            turn_result = await self.handle_turn_response(
+                                context,
+                                response,
+                                signal=signal,
+                            )
 
-            if turn_result.status not in {"failed", "cancelled"}:
-                self.event_bus.emit(
-                    TurnCompletedEvent(
-                        ctx=build_event_context(context.agent, context.trace_id),
-                        turn_count=context.agent.turn_count,
-                        usage=turn_result.usage,
+                context.agent = turn_result.agent
+                total_usage = self._add_usage(total_usage, turn_result.usage)
+
+                # drain tool events collected during handle_turn_response into the stream
+                while tool_stream_buffer:
+                    yield tool_stream_buffer.pop(0)
+
+                if turn_result.status not in {"failed", "cancelled"}:
+                    self.event_bus.emit(
+                        TurnCompletedEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            turn_count=context.agent.turn_count,
+                            usage=turn_result.usage,
+                        )
                     )
-                )
 
-            if turn_result.status == "cancelled":
-                self._cancel_run(context)
+                if turn_result.status == "cancelled":
+                    self._cancel_run(context)
+                    return
+
+                context.agent.turn_count += 1
+                context.agent.updated_at = utcnow()
+                context.agent = self.agent_repository.save(context.agent)
+                turns_executed += 1
+
+                if turn_result.status == "continue":
+                    context = self.reload_context(context)
+                    continue
+
+                if turn_result.status == "waiting":
+                    self.event_bus.emit(
+                        AgentWaitingEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            waiting_for=list(context.agent.waiting_for),
+                        )
+                    )
+                    return
+
+                if turn_result.status == "completed":
+                    self.event_bus.emit(
+                        AgentCompletedEvent(
+                            ctx=build_event_context(context.agent, context.trace_id),
+                            duration_ms=self._duration_ms(run_started_at),
+                            usage=total_usage,
+                            result=self._find_run_result(context),
+                        )
+                    )
+                    return
+
+                result = self._fail_run(
+                    context,
+                    error=turn_result.error or "Agent execution failed.",
+                )
+                if not turn_result.error_emitted:
+                    yield ProviderErrorEvent(error=result.error or "Agent execution failed.")
                 return
 
-            context.agent.turn_count += 1
-            context.agent.updated_at = utcnow()
-            context.agent = self.agent_repository.save(context.agent)
-            turns_executed += 1
-
-            if turn_result.status == "continue":
-                context = self.reload_context(context)
-                continue
-
-            if turn_result.status == "waiting":
-                self.event_bus.emit(
-                    AgentWaitingEvent(
-                        ctx=build_event_context(context.agent, context.trace_id),
-                        waiting_for=list(context.agent.waiting_for),
-                    )
-                )
-                return
-
-            if turn_result.status == "completed":
-                self.event_bus.emit(
-                    AgentCompletedEvent(
-                        ctx=build_event_context(context.agent, context.trace_id),
-                        duration_ms=self._duration_ms(run_started_at),
-                        usage=total_usage,
-                        result=self._find_run_result(context),
-                    )
-                )
-                return
-
-            result = self._fail_run(
-                context,
-                error=turn_result.error or "Agent execution failed.",
-            )
-            if not turn_result.error_emitted:
-                yield ProviderErrorEvent(error=result.error or "Agent execution failed.")
-            return
-
-        result = self._fail_run(context, error="Agent stopped unexpectedly.")
-        yield ProviderErrorEvent(error=result.error or "Agent stopped unexpectedly.")
+            result = self._fail_run(context, error="Agent stopped unexpectedly.")
+            yield ProviderErrorEvent(error=result.error or "Agent stopped unexpectedly.")
+        finally:
+            for _unsubscribe in _tool_stream_unsubscribers:
+                _unsubscribe()
 
     async def execute_turn(
         self,

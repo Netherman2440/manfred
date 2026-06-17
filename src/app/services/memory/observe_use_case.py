@@ -92,12 +92,25 @@ class ObserveUseCase:
         item_repository = ItemRepository(sa_session)
         agent_repository = AgentRepository(sa_session)
 
+        # The observer runs in its OWN DB session, separate from the runner's. A full chat run
+        # (root agent + every delegated sub-agent) executes inside a single transaction that
+        # commits only when the run finishes (see ChatService.process_chat). turn.completed fires
+        # mid-run, so a freshly-created sub-agent (delegation) is not yet visible to this separate
+        # session and get() returns None. That is expected, not an error — skip quietly. Root
+        # agents persist across requests, so they remain observable on their next turn.
         session = session_repository.get(session_id)
         if session is None:
-            raise ValueError(f"Session not found: {session_id}")
+            logger.debug("Observation skipped: session not yet visible session=%s", session_id)
+            return ObserveOutcome(result=None, status="skipped")
         agent = agent_repository.get(agent_run_id)
         if agent is None:
-            raise ValueError(f"Agent not found: {agent_run_id}")
+            logger.debug(
+                "Observation skipped: agent not yet visible (likely a delegated sub-agent created "
+                "in the still-open run transaction) agent=%s session=%s",
+                agent_run_id,
+                session_id,
+            )
+            return ObserveOutcome(result=None, status="skipped")
         if not agent.agent_name:
             raise ValueError(f"Agent {agent_run_id} has no agent_name; observation not supported.")
 
